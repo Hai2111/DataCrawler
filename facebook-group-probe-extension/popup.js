@@ -17,6 +17,14 @@ const elements = {
 
 let latestDebugLog = [];
 
+function inputUrls() {
+  return [...new Set(elements.groups.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean))];
+}
+
+function syncUrlCount() {
+  elements.groupTarget.value = inputUrls().length;
+}
+
 function setStatus(message, kind = '') {
   elements.status.textContent = message;
   elements.status.dataset.kind = kind;
@@ -41,9 +49,10 @@ function renderDebugLog(log = []) {
 }
 
 function optionsFromForm() {
-  const groupTarget = Number(elements.groupTarget.value) || 10;
+  const targetGroups = inputUrls();
+  const groupTarget = targetGroups.length;
   return {
-    target_groups: elements.groups.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
+    target_groups: targetGroups,
     config: {
       session_group_target: groupTarget,
       discovery_candidate_limit: Math.max(20, groupTarget * 2),
@@ -135,7 +144,8 @@ function renderState(state) {
     elements.state.textContent = 'Tạm dừng';
     elements.state.dataset.state = 'paused';
   } else {
-    elements.state.textContent = `Đang quét ${Object.keys(state.group_results || {}).length}/${state.config.session_group_target}`;
+    const queueTotal = state.mode === 'url_auto' ? state.target_groups?.length || 0 : state.config.session_group_target;
+    elements.state.textContent = `Đang quét URL ${Math.min(state.current_index + 1, queueTotal)}/${queueTotal}`;
     elements.state.dataset.state = 'running';
   }
   const url = state.target_groups?.[state.current_index];
@@ -143,15 +153,17 @@ function renderState(state) {
   const partial = key ? state.partial_results?.[key] : null;
   const merged = { ...(state.attempt_results || {}), ...(state.partial_results || {}) };
   const totalPosts = Object.values(merged).reduce((sum, group) => sum + (group.posts?.length || 0), 0);
-  const totalTarget = state.config.minimum_unique_posts_per_group * state.config.session_group_target;
-  setStatus(`Group đang quét: ${url || 'đang hoàn tất'}\nBài group hiện tại: ${partial?.posts?.length || 0}/${state.config.minimum_unique_posts_per_group}\nTổng đã lưu: ${totalPosts}/${totalTarget} bài\nGroup hoàn tất: ${Object.keys(state.group_results || {}).length}/${state.config.session_group_target}\nSố lần phục hồi group hiện tại: ${partial?.recovery_count || 0}`);
+  const queueTotal = state.mode === 'url_auto' ? state.target_groups?.length || 0 : state.config.session_group_target;
+  const processedUrls = Object.keys(state.attempt_results || {}).length;
+  const totalTarget = state.config.minimum_unique_posts_per_group * queueTotal;
+  setStatus(`Group đang quét: ${url || 'đang hoàn tất'}\nBài group hiện tại: ${partial?.posts?.length || 0}/${state.config.minimum_unique_posts_per_group}\nTổng đã lưu: ${totalPosts}/${totalTarget} bài\nURL đã xử lý: ${processedUrls}/${queueTotal}\nGroup đủ mục tiêu: ${Object.keys(state.group_results || {}).length}/${queueTotal}\nSố lần phục hồi group hiện tại: ${partial?.recovery_count || 0}`);
 }
 
 async function loadState() {
   const response = await chrome.runtime.sendMessage({ action: 'getBatchState' });
   const settings = response.settings;
   elements.groups.value = (settings.target_groups || []).join('\n');
-  elements.groupTarget.value = settings.config?.session_group_target || 10;
+  syncUrlCount();
   elements.minimumPosts.value = settings.config?.minimum_unique_posts_per_group || 100;
   elements.checkpointExportEvery.value = settings.config?.checkpoint_export_every_posts ?? 100;
   elements.privacyMode.value = settings.config?.privacy_mode || 'contacts_only';
@@ -170,6 +182,8 @@ async function loadState() {
     setStatus(`Lần xuất gần nhất: ${destination}`, 'success');
   }
 }
+
+elements.groups.addEventListener('input', syncUrlCount);
 
 document.querySelector('#select-directory').addEventListener('click', async () => {
   try {

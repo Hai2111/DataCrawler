@@ -1,4 +1,4 @@
-# Facebook URL Demand Collector v0.6.1
+# Facebook URL Demand Collector v0.6.2
 
 Chrome Manifest V3 extension for a user-started, read-only research session on Facebook content the signed-in user can already access.
 
@@ -6,7 +6,7 @@ Chrome Manifest V3 extension for a user-started, read-only research session on F
 
 1. Enter one Facebook Group URL per line.
 2. The extension normalizes and removes duplicate URLs.
-3. It visits the supplied groups sequentially until up to 10 accessible groups each reach 100 unique posts, or the URL list is exhausted.
+3. In URL mode it attempts every normalized URL sequentially and finishes only when the URL queue is exhausted or the user explicitly stops the session.
 4. It classifies visible post text as demand, purchase, design-service, repair/support or pricing intent.
 5. For demand posts only, it can retain phone numbers and email addresses explicitly written in the visible post.
 6. It removes exact content duplicates across groups and exports JSON automatically at the end.
@@ -19,7 +19,9 @@ The popup shows current-group progress, total posts retained, completed groups a
 
 Version 0.6.1 adds a persistent debug log to the popup and every exported JSON payload. It records session lifecycle, per-group scan counts, total retained posts, completed groups, recovery attempts and export destinations without logging post text or contact values. The popup can copy or clear the latest 500 entries.
 
-The defaults are up to 10 groups and 100 posts per group. A temporary feed saturation no longer ends a group: the collector keeps recovering and retrying until the target is reached or the user presses **Dừng & xuất**. A group that remains inaccessible behind a join/request screen is recorded as incomplete and skipped so the URL queue can continue.
+Version 0.6.2 makes URL mode exhaustive. The completed-group target can no longer end a URL session early; inaccessible groups are recorded and skipped, and scanning continues with the next URL until every supplied URL has been attempted.
+
+The default is 100 posts per group, with up to 50 unique supplied URLs per session. A temporary feed saturation no longer ends a group: the collector keeps recovering and retrying until the target is reached or the user presses **Dừng & xuất**. A group that remains inaccessible behind a join/request screen is recorded as incomplete and skipped so the URL queue can continue.
 
 ## Data minimization
 
@@ -55,7 +57,7 @@ The recommended `contacts_only` mode:
 - Chrome may require the directory to be selected again after a browser restart or permission reset.
 - If direct writing is unavailable, the extension automatically falls back to `Downloads/FacebookDemandCollector`.
 
-## Output schema 0.6.1
+## Output schema 0.6.2
 
 The downloaded JSON contains:
 

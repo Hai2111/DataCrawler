@@ -9,14 +9,14 @@
   <body>
     <main>
       <header>
-        <h1>Facebook Demand Collector <small>v0.6.1</small></h1>
+        <h1>Facebook Demand Collector <small>v0.6.2</small></h1>
         <span id="run-state" class="pill">Sẵn sàng</span>
       </header>
       <label for="groups">URL Facebook Group — mỗi dòng một URL</label>
       <textarea id="groups" rows="7" spellcheck="false" placeholder="https://www.facebook.com/groups/..."></textarea>
       <div class="grid">
-        <label>Số group hoàn tất
-          <input id="group-target" type="number" min="1" max="10" value="10" />
+        <label>Số URL sẽ quét
+          <input id="group-target" type="number" min="0" max="50" value="0" readonly />
         </label>
         <label>Bài/group
           <input id="minimum-posts" type="number" min="1" max="1000" value="100" />

@@ -65,7 +65,7 @@ function clampInteger(value, fallback, minimum, maximum) {
 function normalizeConfig(input = {}) {
   const minimumWait = clampInteger(input.minimum_wait_ms, DEFAULT_CONFIG.minimum_wait_ms, 800, 30000);
   const maximumWait = clampInteger(input.maximum_wait_ms, DEFAULT_CONFIG.maximum_wait_ms, 1000, 60000);
-  const groupTarget = clampInteger(input.session_group_target, 10, 1, 10);
+  const groupTarget = clampInteger(input.session_group_target, 10, 1, 50);
   return {
     ...DEFAULT_CONFIG,
     session_group_target: groupTarget,
@@ -246,7 +246,7 @@ function makePayload(state) {
   const demandPosts = uniquePosts.filter((post) => post.demand?.is_demand);
   const contactLeads = demandPosts.filter((post) => (post.contacts?.phones?.length || 0) + (post.contacts?.emails?.length || 0) > 0);
   return {
-    schema_version: '0.6.1',
+    schema_version: '0.6.2',
     scope: state.mode === 'url_auto'
       ? 'url_provided_accessible_facebook_group_demand_leads'
       : 'keyword_discovered_accessible_facebook_group_demand_leads',
@@ -293,7 +293,7 @@ async function startAutomatedSession(tabId, options = {}) {
   if (!keywords.length) throw new Error('Hãy nhập ít nhất một keyword tìm group.');
   const config = normalizeConfig(options.config);
   const state = {
-    schema_version: '0.6.1', mode: 'keyword_auto', phase: 'discovering', running: true,
+    schema_version: '0.6.2', mode: 'keyword_auto', phase: 'discovering', running: true,
     paused: false, stopped: false, tab_id: tabId,
     started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     keywords, current_keyword_index: 0, discovered_groups: [], target_groups: [], current_index: 0,
@@ -311,9 +311,10 @@ async function startUrlSession(tabId, options = {}) {
   const targetGroups = normalizeTargets(options.target_groups);
   if (!targetGroups.length) throw new Error('Hãy nhập ít nhất một URL Facebook Group hợp lệ.');
   const config = normalizeConfig(options.config);
-  config.session_group_target = Math.min(config.session_group_target, targetGroups.length);
+  // URL mode is exhaustive: every normalized URL in the supplied queue must be attempted.
+  config.session_group_target = targetGroups.length;
   const state = {
-    schema_version: '0.6.1', mode: 'url_auto', phase: 'collecting', running: true,
+    schema_version: '0.6.2', mode: 'url_auto', phase: 'collecting', running: true,
     paused: false, stopped: false, tab_id: tabId,
     started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     keywords: [], current_keyword_index: 0, discovered_groups: [],
@@ -454,7 +455,9 @@ async function submitGroupResult(message) {
   state.current_index += 1;
   state.updated_at = new Date().toISOString();
   const completeCount = Object.keys(state.group_results).length;
-  if (completeCount >= state.config.session_group_target || state.current_index >= state.target_groups.length) {
+  const queueExhausted = state.current_index >= state.target_groups.length;
+  const targetReached = state.mode !== 'url_auto' && completeCount >= state.config.session_group_target;
+  if (queueExhausted || targetReached) {
     const payload = await finishBatch(state);
     return { ok: true, finished: true, complete_count: completeCount, leads: payload.contact_lead_count };
   }
@@ -551,7 +554,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const state = result.fbCollectorState || null;
       if (state) {
         state.config = normalizeConfig(state.config || {});
-        state.schema_version = '0.6.1';
+        state.schema_version = '0.6.2';
         state.debug_log = Array.isArray(state.debug_log) ? state.debug_log.slice(-MAX_DEBUG_LOG_ENTRIES) : [];
         state.debug_log_sequence = Number.isFinite(state.debug_log_sequence)
           ? state.debug_log_sequence
