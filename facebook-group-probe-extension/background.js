@@ -29,6 +29,8 @@ const DEFAULT_CONFIG = {
   collect_public_contacts: true,
   demand_only_contacts: true,
   save_to_selected_directory: true,
+  checkpoint_export_every_posts: 100,
+  export_after_each_group: true,
   privacy_mode: 'contacts_only',
   checkpoint_every_rounds: 3
 };
@@ -81,6 +83,8 @@ function normalizeConfig(input = {}) {
     collect_public_contacts: input.collect_public_contacts !== false,
     demand_only_contacts: input.demand_only_contacts !== false,
     save_to_selected_directory: input.save_to_selected_directory !== false,
+    checkpoint_export_every_posts: clampInteger(input.checkpoint_export_every_posts, 100, 0, 5000),
+    export_after_each_group: input.export_after_each_group !== false,
     privacy_mode: ['redacted', 'contacts_only', 'full'].includes(input.privacy_mode) ? input.privacy_mode : 'contacts_only',
     checkpoint_every_rounds: clampInteger(input.checkpoint_every_rounds, 3, 1, 50)
   };
@@ -225,12 +229,14 @@ function makePayload(state) {
   const demandPosts = uniquePosts.filter((post) => post.demand?.is_demand);
   const contactLeads = demandPosts.filter((post) => (post.contacts?.phones?.length || 0) + (post.contacts?.emails?.length || 0) > 0);
   return {
-    schema_version: '0.5',
+    schema_version: '0.6',
     scope: state.mode === 'url_auto'
       ? 'url_provided_accessible_facebook_group_demand_leads'
       : 'keyword_discovered_accessible_facebook_group_demand_leads',
     started_at: state.started_at,
     finished_at: state.finished_at,
+    snapshot_at: new Date().toISOString(),
+    run_status: state.running ? 'running_checkpoint' : (state.stopped ? 'stopped_by_user' : 'completed'),
     stopped_by_user: Boolean(state.stopped),
     discovery: {
       mode: state.mode,
@@ -269,11 +275,12 @@ async function startAutomatedSession(tabId, options = {}) {
   if (!keywords.length) throw new Error('Hãy nhập ít nhất một keyword tìm group.');
   const config = normalizeConfig(options.config);
   const state = {
-    schema_version: '0.5', mode: 'keyword_auto', phase: 'discovering', running: true,
+    schema_version: '0.6', mode: 'keyword_auto', phase: 'discovering', running: true,
     paused: false, stopped: false, tab_id: tabId,
     started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     keywords, current_keyword_index: 0, discovered_groups: [], target_groups: [], current_index: 0,
-    config, group_results: {}, attempt_results: {}, partial_results: {}, errors: []
+    config, group_results: {}, attempt_results: {}, partial_results: {}, errors: [],
+    last_checkpoint_export_post_total: 0
   };
   await chrome.storage.local.set({ fbCollectorState: state, fbCollectorSettings: { keywords, config } });
   await chrome.tabs.update(tabId, { url: searchUrl(keywords[0]) });
@@ -287,12 +294,13 @@ async function startUrlSession(tabId, options = {}) {
   const config = normalizeConfig(options.config);
   config.session_group_target = Math.min(config.session_group_target, targetGroups.length);
   const state = {
-    schema_version: '0.5', mode: 'url_auto', phase: 'collecting', running: true,
+    schema_version: '0.6', mode: 'url_auto', phase: 'collecting', running: true,
     paused: false, stopped: false, tab_id: tabId,
     started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     keywords: [], current_keyword_index: 0, discovered_groups: [],
     target_groups: targetGroups, current_index: 0,
-    config, group_results: {}, attempt_results: {}, partial_results: {}, errors: []
+    config, group_results: {}, attempt_results: {}, partial_results: {}, errors: [],
+    last_checkpoint_export_post_total: 0
   };
   await chrome.storage.local.set({
     fbCollectorState: state,
@@ -357,7 +365,22 @@ async function checkpointProgress(message) {
   state.partial_results[message.progress.group_key] = message.progress;
   state.updated_at = new Date().toISOString();
   await chrome.storage.local.set({ fbCollectorState: state });
-  return { ok: true };
+  const merged = { ...(state.attempt_results || {}), ...(state.partial_results || {}) };
+  const totalPosts = Object.values(merged).reduce((sum, group) => sum + (group.posts?.length || 0), 0);
+  const interval = state.config.checkpoint_export_every_posts || 0;
+  let exportResult = null;
+  if (interval > 0 && totalPosts >= (state.last_checkpoint_export_post_total || 0) + interval) {
+    state.last_checkpoint_export_post_total = totalPosts;
+    const snapshot = makePayload(state);
+    exportResult = await savePayload(snapshot, 'facebook-demand-checkpoint', state.config.save_to_selected_directory);
+    snapshot.export_result = exportResult;
+    await chrome.storage.local.set({
+      fbCollectorState: state,
+      fbCollectorLastResult: snapshot,
+      fbCollectorLastExport: exportResult
+    });
+  }
+  return { ok: true, total_posts: totalPosts, checkpoint_export: exportResult };
 }
 
 async function submitGroupResult(message) {
@@ -374,6 +397,12 @@ async function submitGroupResult(message) {
   if (completeCount >= state.config.session_group_target || state.current_index >= state.target_groups.length) {
     const payload = await finishBatch(state);
     return { ok: true, finished: true, complete_count: completeCount, leads: payload.contact_lead_count };
+  }
+  if (complete && state.config.export_after_each_group) {
+    const snapshot = makePayload(state);
+    const exportResult = await savePayload(snapshot, 'facebook-demand-checkpoint', state.config.save_to_selected_directory);
+    snapshot.export_result = exportResult;
+    await chrome.storage.local.set({ fbCollectorLastResult: snapshot, fbCollectorLastExport: exportResult });
   }
   await chrome.storage.local.set({ fbCollectorState: state });
   await chrome.tabs.update(state.tab_id, { url: state.target_groups[state.current_index] });
@@ -406,6 +435,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
+  if (message.action === 'exportRunningCheckpoint') {
+    chrome.storage.local.get('fbCollectorState').then(async ({ fbCollectorState: state }) => {
+      if (!state?.running) return sendResponse({ ok: false, error: 'Không có tiến trình đang chạy.' });
+      const snapshot = makePayload(state);
+      const exportResult = await savePayload(snapshot, 'facebook-demand-checkpoint', state.config.save_to_selected_directory);
+      snapshot.export_result = exportResult;
+      await chrome.storage.local.set({ fbCollectorLastResult: snapshot, fbCollectorLastExport: exportResult });
+      sendResponse({ ...exportResult, running: true, unique_post_count: snapshot.unique_post_count });
+    }).catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
   if (message.action === 'startAutomatedSession') {
     (async () => {
       if (message.options) return startAutomatedSession(tabId, message.options);
@@ -426,10 +466,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message.action === 'getBatchState') {
-    chrome.storage.local.get(['fbCollectorState', 'fbCollectorSettings', 'fbCollectorLastResult', 'fbCollectorLastExport']).then((result) => {
+    chrome.storage.local.get(['fbCollectorState', 'fbCollectorSettings', 'fbCollectorLastResult', 'fbCollectorLastExport']).then(async (result) => {
       const saved = result.fbCollectorSettings || {};
+      const state = result.fbCollectorState || null;
+      if (state) {
+        state.config = normalizeConfig(state.config || {});
+        state.schema_version = '0.6';
+        if (!Number.isFinite(state.last_checkpoint_export_post_total)) state.last_checkpoint_export_post_total = 0;
+        await chrome.storage.local.set({ fbCollectorState: state });
+      }
       sendResponse({
-        state: result.fbCollectorState || null,
+        state,
         settings: {
           ...saved,
           target_groups: saved.target_groups?.length ? saved.target_groups : DEFAULT_TARGET_GROUPS,

@@ -570,14 +570,15 @@
     return state;
   }
 
-  async function checkpoint(posts, round, noNewRounds) {
-    await chrome.runtime.sendMessage({
+  async function checkpoint(posts, round, noNewRounds, recoveryCount) {
+    return chrome.runtime.sendMessage({
       action: 'checkpointGroupProgress',
       progress: {
         ...groupMetadata(),
         checkpoint_at: new Date().toISOString(),
         round,
         no_new_rounds: noNewRounds,
+        recovery_count: recoveryCount,
         posts: [...posts.values()]
       }
     });
@@ -592,11 +593,10 @@
       const posts = new Map((saved?.posts || []).map((post) => [post.post_id, post]));
       let noNewRounds = saved?.no_new_rounds || 0;
       let round = saved?.round || 0;
+      let recoveryCount = saved?.recovery_count || 0;
       statusBadge(`Collector raw: ${groupKey()} — tiếp tục từ ${posts.size} bài`);
 
-      while (posts.size < config.minimum_unique_posts_per_group &&
-             noNewRounds < config.saturation_rounds &&
-             round < config.maximum_rounds_per_group) {
+      while (posts.size < config.minimum_unique_posts_per_group) {
         const state = await waitWhilePaused();
         if (!state?.running) return;
         const before = posts.size;
@@ -606,25 +606,53 @@
           .forEach((post) => upsertPost(posts, post, config));
         noNewRounds = posts.size === before ? noNewRounds + 1 : 0;
         round += 1;
-        statusBadge(`Collector raw: ${groupKey()} — ${posts.size} bài, vòng ${round}, bão hòa ${noNewRounds}/${config.saturation_rounds}`);
-        if (round % config.checkpoint_every_rounds === 0) await checkpoint(posts, round, noNewRounds);
+        statusBadge(`Collector raw: ${groupKey()} — ${posts.size}/${config.minimum_unique_posts_per_group} bài, vòng ${round}, chờ mới ${noNewRounds}/${config.saturation_rounds}`);
+        if (round % config.checkpoint_every_rounds === 0) await checkpoint(posts, round, noNewRounds, recoveryCount);
+
+        if (noNewRounds >= config.saturation_rounds) {
+          recoveryCount += 1;
+          noNewRounds = 0;
+          await checkpoint(posts, round, noNewRounds, recoveryCount);
+          const joinButton = [...document.querySelectorAll('button, [role="button"]')]
+            .some((button) => /^(Tham gia nhóm|Join group|Yêu cầu tham gia|Request to join)$/i.test(cleanText(button.textContent)));
+          if (posts.size === 0 && joinButton && recoveryCount >= 2) {
+            const result = {
+              ...groupMetadata(),
+              collected_at: new Date().toISOString(),
+              stop_reason: 'inaccessible_group_skipped',
+              rounds: round,
+              recovery_count: recoveryCount,
+              join_required: true,
+              posts: []
+            };
+            statusBadge(`Collector raw: ${groupKey()} — không truy cập được, chuyển group`);
+            await chrome.runtime.sendMessage({ action: 'submitGroupResult', result });
+            return;
+          }
+          statusBadge(`Collector raw: ${groupKey()} — phục hồi lần ${recoveryCount}, vẫn tiếp tục quét`);
+          window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+          await wait(Math.max(config.maximum_wait_ms, 3000));
+          if (recoveryCount % 3 === 0) {
+            await checkpoint(posts, round, noNewRounds, recoveryCount);
+            location.reload();
+            return;
+          }
+          continue;
+        }
+
         window.scrollBy({ top: Math.max(window.innerHeight * 0.9, 680), behavior: 'smooth' });
         const delay = config.minimum_wait_ms + Math.random() * (config.maximum_wait_ms - config.minimum_wait_ms);
         await wait(delay);
       }
 
-      await checkpoint(posts, round, noNewRounds);
-      const joinButton = [...document.querySelectorAll('button, [role="button"]')]
-        .some((button) => /^(Tham gia nhóm|Join group)$/i.test(cleanText(button.textContent)));
-      const stopReason = posts.size >= config.minimum_unique_posts_per_group
-        ? 'analysis_sample_reached'
-        : (round >= config.maximum_rounds_per_group ? 'maximum_rounds_safety_stop' : 'feed_saturated');
+      await checkpoint(posts, round, noNewRounds, recoveryCount);
       const result = {
         ...groupMetadata(),
         collected_at: new Date().toISOString(),
-        stop_reason: stopReason,
+        stop_reason: 'target_reached',
         rounds: round,
-        join_required: posts.size === 0 && joinButton,
+        recovery_count: recoveryCount,
+        join_required: false,
         posts: [...posts.values()]
       };
       statusBadge(`Collector raw: ${groupKey()} — hoàn tất ${posts.size} bài`);
@@ -639,7 +667,7 @@
     maximum_comments_per_post: 10, collect_raw_snapshot: true
   }) {
     return {
-      schema_version: '0.5',
+      schema_version: '0.6',
       collected_at: new Date().toISOString(),
       ...groupMetadata(),
       scope: 'visible_posts_only',

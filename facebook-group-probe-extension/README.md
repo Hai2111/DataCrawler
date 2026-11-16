@@ -1,4 +1,4 @@
-# Facebook URL Demand Collector v0.5
+# Facebook URL Demand Collector v0.6
 
 Chrome Manifest V3 extension for a user-started, read-only research session on Facebook content the signed-in user can already access.
 
@@ -13,7 +13,11 @@ Chrome Manifest V3 extension for a user-started, read-only research session on F
 
 Version 0.5 enriches each post across repeated observations instead of replacing the whole record. It separately fills missing permalink, timestamp, author, engagement, media and visible comments, and writes `data_completeness.missing_fields` plus extraction-source metadata for auditing.
 
-The defaults are 10 completed groups, 100 posts per group and a high 2,500-round safety limit per group. A group that saturates before 100 posts is saved as incomplete and the session continues to the next supplied URL.
+Version 0.6 treats saturation as a recovery signal, not a completion condition. It scrolls to the feed end, periodically reloads and resumes from the saved checkpoint until the configured post target is reached. Running checkpoint files may be exported every N collected posts and after each completed group without stopping the session.
+
+The popup shows current-group progress, total posts retained, completed groups and recovery attempts. **Xuất checkpoint ngay — không dừng** writes a snapshot while leaving the collector running.
+
+The defaults are up to 10 groups and 100 posts per group. A temporary feed saturation no longer ends a group: the collector keeps recovering and retrying until the target is reached or the user presses **Dừng & xuất**. A group that remains inaccessible behind a join/request screen is recorded as incomplete and skipped so the URL queue can continue.
 
 ## Data minimization
 
@@ -49,7 +53,7 @@ The recommended `contacts_only` mode:
 - Chrome may require the directory to be selected again after a browser restart or permission reset.
 - If direct writing is unavailable, the extension automatically falls back to `Downloads/FacebookDemandCollector`.
 
-## Output schema 0.5
+## Output schema 0.6
 
 The downloaded JSON contains:
 

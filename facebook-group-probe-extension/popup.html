@@ -9,7 +9,7 @@
   <body>
     <main>
       <header>
-        <h1>Facebook Demand Collector <small>v0.5</small></h1>
+        <h1>Facebook Demand Collector <small>v0.6</small></h1>
         <span id="run-state" class="pill">Sẵn sàng</span>
       </header>
       <label for="groups">URL Facebook Group — mỗi dòng một URL</label>
@@ -22,6 +22,10 @@
           <input id="minimum-posts" type="number" min="1" max="1000" value="100" />
         </label>
       </div>
+      <label>Xuất checkpoint mỗi N bài — 0 để tắt
+        <input id="checkpoint-export-every" type="number" min="0" max="5000" value="100" />
+      </label>
+      <p class="hint">Xuất checkpoint không dừng tiến trình; extension tiếp tục cho tới khi từng group đủ số bài đã đặt.</p>
       <label for="privacy-mode">Chế độ dữ liệu</label>
       <select id="privacy-mode">
         <option value="contacts_only">Chỉ contact công khai trong bài nhu cầu</option>
@@ -47,6 +51,7 @@
         <button id="stop" class="danger">Dừng & xuất</button>
       </div>
       <div class="actions secondary">
+        <button id="export-now">Xuất checkpoint ngay — không dừng</button>
         <button id="download-last">Tải kết quả gần nhất</button>
       </div>
       <output id="status" aria-live="polite"></output>

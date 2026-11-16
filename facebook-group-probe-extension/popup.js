@@ -2,6 +2,7 @@ const elements = {
   groups: document.querySelector('#groups'),
   groupTarget: document.querySelector('#group-target'),
   minimumPosts: document.querySelector('#minimum-posts'),
+  checkpointExportEvery: document.querySelector('#checkpoint-export-every'),
   privacyMode: document.querySelector('#privacy-mode'),
   saveSelectedDirectory: document.querySelector('#save-selected-directory'),
   collectContacts: document.querySelector('#collect-contacts'),
@@ -25,6 +26,8 @@ function optionsFromForm() {
       session_group_target: groupTarget,
       discovery_candidate_limit: Math.max(20, groupTarget * 2),
       minimum_unique_posts_per_group: Number(elements.minimumPosts.value) || 100,
+      checkpoint_export_every_posts: Math.max(0, Number(elements.checkpointExportEvery.value) || 0),
+      export_after_each_group: true,
       saturation_rounds: 25,
       maximum_rounds_per_group: 2500,
       privacy_mode: elements.privacyMode.value,
@@ -115,7 +118,10 @@ function renderState(state) {
   const url = state.target_groups?.[state.current_index];
   const key = url ? new URL(url).pathname.split('/')[2] : null;
   const partial = key ? state.partial_results?.[key] : null;
-  setStatus(`Group đang quét: ${url || 'đang hoàn tất'}\nCheckpoint: ${partial?.posts?.length || 0}/${state.config.minimum_unique_posts_per_group} bài\nGroup đủ dữ liệu: ${Object.keys(state.group_results || {}).length}/${state.config.session_group_target}`);
+  const merged = { ...(state.attempt_results || {}), ...(state.partial_results || {}) };
+  const totalPosts = Object.values(merged).reduce((sum, group) => sum + (group.posts?.length || 0), 0);
+  const totalTarget = state.config.minimum_unique_posts_per_group * state.config.session_group_target;
+  setStatus(`Group đang quét: ${url || 'đang hoàn tất'}\nBài group hiện tại: ${partial?.posts?.length || 0}/${state.config.minimum_unique_posts_per_group}\nTổng đã lưu: ${totalPosts}/${totalTarget} bài\nGroup hoàn tất: ${Object.keys(state.group_results || {}).length}/${state.config.session_group_target}\nSố lần phục hồi group hiện tại: ${partial?.recovery_count || 0}`);
 }
 
 async function loadState() {
@@ -124,6 +130,7 @@ async function loadState() {
   elements.groups.value = (settings.target_groups || []).join('\n');
   elements.groupTarget.value = settings.config?.session_group_target || 10;
   elements.minimumPosts.value = settings.config?.minimum_unique_posts_per_group || 100;
+  elements.checkpointExportEvery.value = settings.config?.checkpoint_export_every_posts ?? 100;
   elements.privacyMode.value = settings.config?.privacy_mode || 'contacts_only';
   elements.saveSelectedDirectory.checked = settings.config?.save_to_selected_directory !== false;
   elements.collectContacts.checked = settings.config?.collect_public_contacts !== false;
@@ -203,6 +210,24 @@ document.querySelector('#download-last').addEventListener('click', async () => {
     ? `${response.directory_name}/${response.filename}`
     : response.folder;
   setStatus(response.ok ? `Đã lưu: ${destination}` : response.error, response.ok ? 'success' : 'error');
+});
+
+document.querySelector('#export-now').addEventListener('click', async () => {
+  const response = await chrome.runtime.sendMessage({ action: 'exportRunningCheckpoint' });
+  const destination = response.destination === 'selected_directory'
+    ? `${response.directory_name}/${response.filename}`
+    : response.folder;
+  setStatus(
+    response.ok
+      ? `Đã xuất ${response.unique_post_count} bài vào ${destination}. Tiến trình vẫn tiếp tục.`
+      : response.error,
+    response.ok ? 'success' : 'error'
+  );
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local' || !changes.fbCollectorState) return;
+  renderState(changes.fbCollectorState.newValue || null);
 });
 
 loadState().catch((error) => setStatus(error.message, 'error'));
