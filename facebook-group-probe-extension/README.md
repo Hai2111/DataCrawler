@@ -1,4 +1,4 @@
-# Facebook URL Demand Collector v0.6.3
+# Facebook URL Demand Collector v0.7.0
 
 Chrome Manifest V3 extension for a user-started, read-only research session on Facebook content the signed-in user can already access.
 
@@ -22,6 +22,8 @@ Version 0.6.1 adds a persistent debug log to the popup and every exported JSON p
 Version 0.6.2 makes URL mode exhaustive. The completed-group target can no longer end a URL session early; inaccessible groups are recorded and skipped, and scanning continues with the next URL until every supplied URL has been attempted.
 
 Version 0.6.3 adds an opt-in local developer bridge. While developer mode is enabled, every debug event is forwarded immediately to `http://127.0.0.1:32145` and appended to `debug_logs/extension-live.jsonl` inside the project. The bridge listens only on localhost and does not receive post text or contact values.
+
+Version 0.7.0 replaces permissive text fallback with a validation-gated extraction pipeline. Only a verified top-level message with a canonical Facebook post identity and trustworthy provenance is `VALID`. Comments and nested shared-post bodies remain separate and can never substitute for a missing original body. Only `VALID` records count toward collection targets or enter demand classification.
 
 The default is 100 posts per group, with up to 50 unique supplied URLs per session. A temporary feed saturation no longer ends a group: the collector keeps recovering and retrying until the target is reached or the user presses **Dừng & xuất**. A group that remains inaccessible behind a join/request screen is recorded as incomplete and skipped so the URL queue can continue.
 
@@ -69,7 +71,7 @@ The local server binds to `127.0.0.1:32145` only. If it is not running, collecti
 - Chrome may require the directory to be selected again after a browser restart or permission reset.
 - If direct writing is unavailable, the extension automatically falls back to `Downloads/FacebookDemandCollector`.
 
-## Output schema 0.6.3
+## Output schema 0.7.0
 
 The downloaded JSON contains:
 
@@ -83,3 +85,16 @@ The downloaded JSON contains:
 - per-post `extraction` sources and `data_completeness` flags;
 - run totals, configuration and errors.
 - `debug_log` with timestamped collection counters, recovery and export events.
+- `validation.status` (`VALID`, `PARTIAL`, or `INVALID`) and required-field reasons;
+- `extraction_failures` with diagnostics and text-free sanitized DOM structure snapshots;
+- timestamp original text, ISO `+07:00` value when reliably parseable, and confidence.
+
+## Extraction validation
+
+- Body source must be a top-level Facebook message node. `dir="auto"` context and comments are never body fallbacks.
+- Canonical identity accepts direct group post/permalink URLs, `story_fbid`, or a group media `set=pcb|gm` identity.
+- `VALID` requires original body, canonical ID, canonical URL, and verified top-level provenance.
+- `PARTIAL` and `INVALID` observations are logged for diagnostics but do not increase the target counter.
+- Demand classification and contact extraction run only after a record becomes `VALID`.
+
+Run the regression suite with `node --test tests/extractor-core.test.js`. Manual-review evidence and before/after metrics are documented in `reports/extraction-validation-v0.7.0.md`.

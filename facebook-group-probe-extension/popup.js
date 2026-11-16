@@ -163,11 +163,13 @@ function renderState(state) {
   const key = url ? new URL(url).pathname.split('/')[2] : null;
   const partial = key ? state.partial_results?.[key] : null;
   const merged = { ...(state.attempt_results || {}), ...(state.partial_results || {}) };
-  const totalPosts = Object.values(merged).reduce((sum, group) => sum + (group.posts?.length || 0), 0);
+  const validCount = (group) => (group?.posts || [])
+    .filter((post) => post.validation?.is_valid === true && post.validation?.status === 'VALID').length;
+  const totalPosts = Object.values(merged).reduce((sum, group) => sum + validCount(group), 0);
   const queueTotal = state.mode === 'url_auto' ? state.target_groups?.length || 0 : state.config.session_group_target;
   const processedUrls = Object.keys(state.attempt_results || {}).length;
   const totalTarget = state.config.minimum_unique_posts_per_group * queueTotal;
-  setStatus(`Group đang quét: ${url || 'đang hoàn tất'}\nBài group hiện tại: ${partial?.posts?.length || 0}/${state.config.minimum_unique_posts_per_group}\nTổng đã lưu: ${totalPosts}/${totalTarget} bài\nURL đã xử lý: ${processedUrls}/${queueTotal}\nGroup đủ mục tiêu: ${Object.keys(state.group_results || {}).length}/${queueTotal}\nSố lần phục hồi group hiện tại: ${partial?.recovery_count || 0}`);
+  setStatus(`Group đang quét: ${url || 'đang hoàn tất'}\nBài VALID group hiện tại: ${validCount(partial)}/${state.config.minimum_unique_posts_per_group}\nTổng VALID đã lưu: ${totalPosts}/${totalTarget} bài\nQuan sát PARTIAL/INVALID: ${partial?.invalid_observation_count || partial?.extraction_failures?.length || 0}\nURL đã xử lý: ${processedUrls}/${queueTotal}\nGroup đủ mục tiêu: ${Object.keys(state.group_results || {}).length}/${queueTotal}\nSố lần phục hồi group hiện tại: ${partial?.recovery_count || 0}`);
 }
 
 async function loadState() {

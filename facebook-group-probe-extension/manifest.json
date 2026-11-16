@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Facebook URL Demand Collector",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "description": "URL-driven, resumable group post collection with demand detection, public contact extraction and deduplication.",
   "permissions": ["activeTab", "downloads", "storage", "tabs", "unlimitedStorage"],
   "host_permissions": ["http://127.0.0.1:32145/*"],
@@ -23,7 +23,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.facebook.com/groups/*"],
-      "js": ["content.js"],
+      "js": ["extractor-core.js", "content.js"],
       "run_at": "document_idle"
     }
   ]

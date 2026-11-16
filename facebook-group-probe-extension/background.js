@@ -225,6 +225,14 @@ function normalizeForDedupe(value) {
     .slice(0, 3000);
 }
 
+function isValidPost(post) {
+  return post?.validation?.is_valid === true && post?.validation?.status === 'VALID';
+}
+
+function validPostCount(group) {
+  return (group?.posts || []).filter(isValidPost).length;
+}
+
 function hashText(value) {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
@@ -240,6 +248,7 @@ function deduplicatePosts(groups) {
   const duplicates = [];
   for (const group of groups) {
     for (const post of group.posts || []) {
+      if (!isValidPost(post)) continue;
       const normalized = normalizeForDedupe(post.text || post.visible_context_text);
       const fingerprint = post.content_fingerprint || hashText(normalized);
       const record = { ...post, source_group_key: group.group_key, source_group_url: group.group_url, content_fingerprint: fingerprint };
@@ -269,7 +278,7 @@ function makePayload(state) {
   const demandPosts = uniquePosts.filter((post) => post.demand?.is_demand);
   const contactLeads = demandPosts.filter((post) => (post.contacts?.phones?.length || 0) + (post.contacts?.emails?.length || 0) > 0);
   return {
-    schema_version: '0.6.3',
+    schema_version: '0.7.0',
     scope: state.mode === 'url_auto'
       ? 'url_provided_accessible_facebook_group_demand_leads'
       : 'keyword_discovered_accessible_facebook_group_demand_leads',
@@ -294,8 +303,9 @@ function makePayload(state) {
     },
     config: state.config,
     attempted_group_count: groups.length,
-    complete_group_count: groups.filter((group) => group.posts?.length >= state.config.minimum_unique_posts_per_group).length,
-    incomplete_group_count: groups.filter((group) => group.posts?.length < state.config.minimum_unique_posts_per_group).length,
+    complete_group_count: groups.filter((group) => validPostCount(group) >= state.config.minimum_unique_posts_per_group).length,
+    incomplete_group_count: groups.filter((group) => validPostCount(group) < state.config.minimum_unique_posts_per_group).length,
+    extraction_failure_count: groups.reduce((sum, group) => sum + (group.extraction_failures?.length || 0), 0),
     unique_post_count: uniquePosts.length,
     duplicate_post_count: duplicates.length,
     demand_post_count: demandPosts.length,
@@ -305,6 +315,7 @@ function makePayload(state) {
     duplicates,
     demand_posts: demandPosts,
     contact_leads: contactLeads,
+    extraction_failures: state.extraction_failures || [],
     debug_log: state.debug_log || [],
     errors: state.errors || []
   };
@@ -316,11 +327,11 @@ async function startAutomatedSession(tabId, options = {}) {
   if (!keywords.length) throw new Error('Hãy nhập ít nhất một keyword tìm group.');
   const config = normalizeConfig(options.config);
   const state = {
-    schema_version: '0.6.3', mode: 'keyword_auto', phase: 'discovering', running: true,
+    schema_version: '0.7.0', mode: 'keyword_auto', phase: 'discovering', running: true,
     paused: false, stopped: false, tab_id: tabId,
     started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     keywords, current_keyword_index: 0, discovered_groups: [], target_groups: [], current_index: 0,
-    config, group_results: {}, attempt_results: {}, partial_results: {}, errors: [], debug_log: [], debug_log_sequence: 0,
+    config, group_results: {}, attempt_results: {}, partial_results: {}, errors: [], extraction_failures: [], debug_log: [], debug_log_sequence: 0,
     last_checkpoint_export_post_total: 0
   };
   addDebugLog(state, 'session_started', { mode: state.mode, group_target: config.session_group_target, posts_per_group: config.minimum_unique_posts_per_group });
@@ -337,12 +348,12 @@ async function startUrlSession(tabId, options = {}) {
   // URL mode is exhaustive: every normalized URL in the supplied queue must be attempted.
   config.session_group_target = targetGroups.length;
   const state = {
-    schema_version: '0.6.3', mode: 'url_auto', phase: 'collecting', running: true,
+    schema_version: '0.7.0', mode: 'url_auto', phase: 'collecting', running: true,
     paused: false, stopped: false, tab_id: tabId,
     started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     keywords: [], current_keyword_index: 0, discovered_groups: [],
     target_groups: targetGroups, current_index: 0,
-    config, group_results: {}, attempt_results: {}, partial_results: {}, errors: [], debug_log: [], debug_log_sequence: 0,
+    config, group_results: {}, attempt_results: {}, partial_results: {}, errors: [], extraction_failures: [], debug_log: [], debug_log_sequence: 0,
     last_checkpoint_export_post_total: 0
   };
   addDebugLog(state, 'session_started', { mode: state.mode, queued_groups: targetGroups.length, group_target: config.session_group_target, posts_per_group: config.minimum_unique_posts_per_group });
@@ -363,7 +374,7 @@ async function finishBatch(state, stopped = false) {
   state.updated_at = state.finished_at;
   const completedGroups = Object.keys(state.group_results || {}).length;
   const retainedPosts = Object.values({ ...(state.attempt_results || {}), ...(state.partial_results || {}) })
-    .reduce((sum, group) => sum + (group.posts?.length || 0), 0);
+    .reduce((sum, group) => sum + validPostCount(group), 0);
   addDebugLog(state, stopped ? 'session_stopped_by_user' : 'session_completed', {
     completed_groups: completedGroups,
     attempted_groups: Object.keys(state.attempt_results || {}).length,
@@ -420,7 +431,7 @@ async function checkpointProgress(message) {
   state.partial_results[message.progress.group_key] = message.progress;
   state.updated_at = new Date().toISOString();
   const merged = { ...(state.attempt_results || {}), ...(state.partial_results || {}) };
-  const totalPosts = Object.values(merged).reduce((sum, group) => sum + (group.posts?.length || 0), 0);
+  const totalPosts = Object.values(merged).reduce((sum, group) => sum + validPostCount(group), 0);
   const interval = state.config.checkpoint_export_every_posts || 0;
   const currentPostCount = message.progress.posts?.length || 0;
   const currentRecoveryCount = message.progress.recovery_count || 0;
@@ -465,12 +476,14 @@ async function submitGroupResult(message) {
   const result = message.result;
   state.attempt_results[result.group_key] = result;
   delete state.partial_results[result.group_key];
-  const complete = (result.posts?.length || 0) >= state.config.minimum_unique_posts_per_group;
+  const validCount = validPostCount(result);
+  result.posts = (result.posts || []).filter(isValidPost);
+  const complete = validCount >= state.config.minimum_unique_posts_per_group;
   if (complete) state.group_results[result.group_key] = result;
   addDebugLog(state, complete ? 'group_completed' : 'group_skipped', {
     group_key: result.group_key,
     group_url: result.group_url,
-    posts: result.posts?.length || 0,
+    posts: validCount,
     target: state.config.minimum_unique_posts_per_group,
     stop_reason: result.stop_reason || null,
     completed_groups: Object.keys(state.group_results).length
@@ -583,8 +596,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const state = result.fbCollectorState || null;
       if (state) {
         state.config = normalizeConfig(state.config || {});
-        state.schema_version = '0.6.3';
+        state.schema_version = '0.7.0';
         state.debug_log = Array.isArray(state.debug_log) ? state.debug_log.slice(-MAX_DEBUG_LOG_ENTRIES) : [];
+        state.extraction_failures = Array.isArray(state.extraction_failures) ? state.extraction_failures.slice(-100) : [];
         state.debug_log_sequence = Number.isFinite(state.debug_log_sequence)
           ? state.debug_log_sequence
           : (state.debug_log.at(-1)?.sequence || 0);
@@ -646,6 +660,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       addDebugLog(state, 'collector_error', errorRecord, 'error');
       await chrome.storage.local.set({ fbCollectorState: state });
       sendResponse({ ok: true });
+    }).catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message.action === 'reportExtractionFailures') {
+    chrome.storage.local.get('fbCollectorState').then(async ({ fbCollectorState: state }) => {
+      if (!state) return sendResponse({ ok: false, error: 'Collector state is unavailable.' });
+      const failures = (message.failures || []).slice(0, 20).map((failure) => ({
+        timestamp: new Date().toISOString(),
+        stage: 'post_extraction_validation',
+        group_key: failure.group_key || null,
+        post_id: failure.post_id || null,
+        post_url: failure.post_url || null,
+        validation: failure.validation || null,
+        diagnostics: failure.diagnostics || null,
+        sanitized_dom_snapshot: failure.sanitized_dom_snapshot || null
+      }));
+      state.extraction_failures = [...(state.extraction_failures || []), ...failures].slice(-100);
+      for (const failure of failures) {
+        addDebugLog(state, 'post_extraction_rejected', {
+          group_key: failure.group_key,
+          post_id: failure.post_id,
+          validation_status: failure.validation?.status,
+          reasons: failure.validation?.reasons || []
+        }, failure.validation?.status === 'INVALID' ? 'error' : 'warning');
+      }
+      await chrome.storage.local.set({ fbCollectorState: state });
+      sendResponse({ ok: true, recorded: failures.length });
     }).catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }

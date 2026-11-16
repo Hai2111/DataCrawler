@@ -5,7 +5,10 @@
   const UI_TEXT = /^(Thích|Bình luận|Chia sẻ|Like|Comment|Share|Theo dõi|Follow|Xem thêm|See more)$/i;
   const PHONE_PATTERN = /(?:\+?84|0)(?:[ .-]?\d){8,10}/g;
   const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
+  const Core = globalThis.FacebookExtractorCore;
+  if (!Core) throw new Error('FacebookExtractorCore was not loaded before content.js.');
   let collecting = false;
+  const reportedExtractionFailures = new Set();
 
   function cleanText(value) {
     return (value || '').replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
@@ -140,58 +143,57 @@
   }
 
   function primaryPostText(container) {
-    const preferred = [...container.querySelectorAll('[data-ad-preview="message"], [data-ad-comet-preview="message"]')]
-      .map((node) => cleanText(node.innerText || node.textContent))
-      .find((value) => value.length >= 10);
-    if (preferred) return { text: preferred, source: 'data-ad-preview-message' };
     const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
-    const candidates = [...container.querySelectorAll('[dir="auto"]')]
-      .filter((node) => {
+    const candidates = [...container.querySelectorAll('[data-ad-preview="message"], [data-ad-comet-preview="message"]')]
+      .map((node) => {
         const closestArticle = node.closest('[role="article"]');
-        if (outerArticle && closestArticle && closestArticle !== outerArticle) return false;
-        if (node.closest('form, [aria-label*="Viết bình luận"], [aria-label*="Write a comment"]')) return false;
-        return true;
-      })
-      .map((node) => cleanText(node.textContent))
-      .filter((value) => value.length >= 12 && !UI_TEXT.test(value))
-      .filter((value) => !/^(\d+\s*(phút|giờ|ngày|tuần)|theo dõi|follow)$/iu.test(value));
-    const unique = uniqueStrings(candidates, 30)
-      .filter((value, index, all) => !all.some((other, otherIndex) => otherIndex !== index && other.includes(value) && other.length > value.length));
-    return { text: unique.join('\n'), source: unique.length ? 'filtered-dir-auto' : 'visible-context-fallback' };
+        return {
+          text: node.innerText || node.textContent,
+          source: 'message',
+          scope: !outerArticle || !closestArticle || closestArticle === outerArticle ? 'top-level' : 'nested',
+          inside_comment: Boolean(node.closest('form, [aria-label*="Viết bình luận" i], [aria-label*="Write a comment" i]')),
+          inside_shared_post: Boolean(outerArticle && closestArticle && closestArticle !== outerArticle)
+        };
+      });
+    return Core.selectOriginalPostBody(candidates);
   }
 
   function postPermalink(container) {
-    const links = [...container.querySelectorAll('a[href]')];
-    const direct = links.find((anchor) => /\/groups\/[^/]+\/(posts|permalink)\//.test(anchor.getAttribute('href') || ''));
-    if (direct) return { url: canonicalUrl(direct.href), source: 'direct-post-link', anchor: direct };
-    const story = links.find((anchor) => /[?&]story_fbid=\d+/.test(anchor.getAttribute('href') || ''));
-    if (story) {
-      const id = new URL(story.href, location.origin).searchParams.get('story_fbid');
-      return { url: `https://www.facebook.com/groups/${groupKey()}/posts/${id}/`, source: 'story-fbid', anchor: story };
-    }
-    return { url: null, source: 'missing', anchor: null };
-  }
-
-  function postIdFromMedia(container) {
-    for (const link of container.querySelectorAll('a[href]')) {
-      const match = (link.getAttribute('href') || '').match(/[?&]set=(?:pcb|gm)\.(\d+)/);
-      if (match) return match[1];
-    }
-    return null;
+    const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
+    const candidates = [...container.querySelectorAll('a[href]')]
+      .filter((anchor) => {
+        const closestArticle = anchor.closest('[role="article"]');
+        return !outerArticle || !closestArticle || closestArticle === outerArticle;
+      })
+      .map((anchor) => ({ anchor, identity: Core.canonicalPostIdentity(anchor.href, groupKey()) }))
+      .filter((item) => item.identity.post_id)
+      .sort((left, right) => right.identity.confidence - left.identity.confidence);
+    const best = candidates[0];
+    return best
+      ? { ...best.identity, anchor: best.anchor }
+      : { ...Core.canonicalPostIdentity(null, groupKey()), anchor: null };
   }
 
   function timestampInfo(container, preferredAnchor) {
-    const timeElement = container.querySelector('time[datetime], abbr[data-utime]');
+    const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
+    const timeElement = [...container.querySelectorAll('time[datetime], abbr[data-utime]')]
+      .find((node) => {
+        const closestArticle = node.closest('[role="article"]');
+        return !outerArticle || !closestArticle || closestArticle === outerArticle;
+      });
     if (timeElement) {
       const iso = timeElement.getAttribute('datetime') ||
         (timeElement.getAttribute('data-utime') ? new Date(Number(timeElement.getAttribute('data-utime')) * 1000).toISOString() : null);
-      return {
-        text: cleanText(timeElement.textContent || timeElement.getAttribute('aria-label') || timeElement.title) || null,
-        iso,
-        source: 'time-element'
-      };
+      const text = cleanText(timeElement.textContent || timeElement.getAttribute('aria-label') || timeElement.title) || null;
+      return { text, iso, source: 'time-element', confidence: iso ? 1 : 0.7 };
     }
-    const anchors = [preferredAnchor, ...container.querySelectorAll('a[href]')].filter(Boolean);
+    const anchors = [preferredAnchor, ...container.querySelectorAll('a[href]')]
+      .filter(Boolean)
+      .filter((anchor, index, all) => all.indexOf(anchor) === index)
+      .filter((anchor) => {
+        const closestArticle = anchor.closest('[role="article"]');
+        return !outerArticle || !closestArticle || closestArticle === outerArticle;
+      });
     const relativePattern = /\b(?:vừa xong|\d+\s*(?:phút|giờ|ngày|tuần|tháng|năm)|just now|\d+\s*(?:m|h|d|w|mo|y))\b/iu;
     const absolutePattern = /\b(?:\d{1,2}\s+tháng\s+\d{1,2}|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2})\b/iu;
     for (const anchor of anchors) {
@@ -199,14 +201,24 @@
         .map(cleanText).filter(Boolean);
       const text = candidates.find((value) => relativePattern.test(value) || absolutePattern.test(value));
       if (text) {
-        return { text, iso: null, source: 'time-like-anchor' };
+        const parsed = Core.parseVietnameseAbsoluteDate(text);
+        return {
+          text,
+          iso: parsed.iso,
+          source: parsed.iso ? parsed.source : 'time-like-anchor',
+          confidence: parsed.iso ? parsed.confidence : 0.45
+        };
       }
     }
-    return { text: null, iso: null, source: 'missing' };
+    return { text: null, iso: null, source: 'missing', confidence: 0 };
   }
 
   function authorInfo(container, config) {
-    const allLinks = [...container.querySelectorAll('a[href]')];
+    const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
+    const allLinks = [...container.querySelectorAll('a[href]')].filter((anchor) => {
+      const closestArticle = anchor.closest('[role="article"]');
+      return !outerArticle || !closestArticle || closestArticle === outerArticle;
+    });
     const groupUserLinks = allLinks.filter((anchor) =>
       /\/groups\/[^/]+\/user\//.test(anchor.getAttribute('href') || '')
     );
@@ -224,17 +236,16 @@
   }
 
   function parseCompactCount(label) {
-    const match = cleanText(label).match(/([\d.,]+)\s*(K|M|N|TR|nghìn|triệu)?/i);
-    if (!match) return null;
-    let value = Number.parseFloat(match[1].replace(/\.(?=\d{3}\b)/g, '').replace(',', '.'));
-    const suffix = (match[2] || '').toLowerCase();
-    if (/^(k|n|nghìn)$/.test(suffix)) value *= 1000;
-    if (/^(m|tr|triệu)$/.test(suffix)) value *= 1000000;
-    return Number.isFinite(value) ? Math.round(value) : null;
+    return Core.parseVietnameseNumber(label);
   }
 
   function engagement(container) {
+    const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
     const labels = [...container.querySelectorAll('[aria-label], button')]
+      .filter((item) => {
+        const closestArticle = item.closest('[role="article"]');
+        return !outerArticle || !closestArticle || closestArticle === outerArticle;
+      })
       .map((item) => cleanText(item.getAttribute('aria-label') || item.textContent)).filter(Boolean);
     const commentLabel = labels.find((label) => /bình luận về bài viết|comment on/i.test(label));
     const shareLabel = labels.find((label) => /chia sẻ bài viết|share post/i.test(label));
@@ -275,7 +286,10 @@
 
   function mediaItems(container) {
     const items = [];
+    const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
     for (const link of container.querySelectorAll('a[href]')) {
+      const closestArticle = link.closest('[role="article"]');
+      if (outerArticle && closestArticle && closestArticle !== outerArticle) continue;
       const href = link.getAttribute('href') || '';
       let type = null;
       if (/\/photo\//.test(href)) type = 'photo';
@@ -294,7 +308,15 @@
   function extractVisibleComments(container, config, names) {
     if (!config.collect_visible_comments || config.maximum_comments_per_post === 0) return [];
     const articleComments = [...container.querySelectorAll('[role="article"]')]
-      .filter((article) => article !== container && !article.contains(container));
+      .filter((article) => article !== container && !article.contains(container))
+      .filter((article) => {
+        const hasCommentPermalink = article.querySelector('a[href*="comment_id="]');
+        const labels = [...article.querySelectorAll('[aria-label], button')]
+          .map((node) => cleanText(node.getAttribute('aria-label') || node.textContent));
+        const hasReplyControl = labels.some((label) => /^(trả lời|reply)$/iu.test(label));
+        const hasNestedPostBody = article.querySelector('[data-ad-preview="message"], [data-ad-comet-preview="message"]');
+        return Boolean(hasCommentPermalink || (hasReplyControl && !hasNestedPostBody));
+      });
     const linkedComments = [...container.querySelectorAll('a[href*="comment_id="]')]
       .map((anchor) => anchor.closest('[role="article"]') || anchor.parentElement?.parentElement)
       .filter(Boolean);
@@ -324,6 +346,59 @@
     };
   }
 
+  function verifiedContainerProvenance(container, identity) {
+    const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
+    const labels = [...container.querySelectorAll('[aria-label], button')]
+      .filter((item) => {
+        const closestArticle = item.closest('[role="article"]');
+        return !outerArticle || !closestArticle || closestArticle === outerArticle;
+      })
+      .map((item) => cleanText(item.getAttribute('aria-label') || item.textContent));
+    const hasPostControl = labels.some((label) => /bình luận về bài viết|comment on|chia sẻ bài viết|share post/i.test(label));
+    const identityInsideContainer = Boolean(identity?.anchor && container.contains(identity.anchor));
+    return {
+      verified_top_level_container: Boolean(outerArticle && hasPostControl && identityInsideContainer),
+      identity_source: identity?.source || 'missing',
+      identity_confidence: identity?.confidence || 0,
+      post_controls_observed: hasPostControl,
+      identity_inside_container: identityInsideContainer
+    };
+  }
+
+  function sanitizedDomSnapshot(container) {
+    const elements = [...container.querySelectorAll('*')].slice(0, 60).map((node) => {
+      const href = node.getAttribute('href');
+      let hrefKind = null;
+      if (href) {
+        try {
+          const url = new URL(href, location.origin);
+          if (/\/groups\/[^/]+\/(?:posts|permalink)\//i.test(url.pathname)) hrefKind = 'group-post';
+          else if (url.searchParams.has('comment_id')) hrefKind = 'comment';
+          else if (/\/photo\//i.test(url.pathname)) hrefKind = 'photo';
+          else if (/\/groups\/[^/]+\/user\//i.test(url.pathname)) hrefKind = 'group-user';
+          else if (/^\/groups\//i.test(url.pathname)) hrefKind = 'group';
+          else hrefKind = 'other-facebook-link';
+        } catch { hrefKind = 'invalid-link'; }
+      }
+      const text = cleanText(node.childNodes.length === 1 && node.firstChild?.nodeType === Node.TEXT_NODE ? node.textContent : '');
+      return {
+        tag: node.tagName.toLowerCase(),
+        role: node.getAttribute('role') || null,
+        href_kind: hrefKind,
+        data_ad_preview: node.getAttribute('data-ad-preview') || node.getAttribute('data-ad-comet-preview') || null,
+        aria_label_hash: node.getAttribute('aria-label') ? textHash(cleanText(node.getAttribute('aria-label'))) : null,
+        text_hash: text ? textHash(text) : null,
+        text_length: text.length
+      };
+    });
+    return {
+      container_tag: container.tagName.toLowerCase(),
+      container_role: container.getAttribute('role') || null,
+      descendant_count: container.querySelectorAll('*').length,
+      elements
+    };
+  }
+
   function dataCompleteness(post) {
     const required = {
       post_id: Boolean(post.post_id && !String(post.post_id).startsWith('text-')),
@@ -336,6 +411,7 @@
     return {
       fields: required,
       missing_fields: Object.entries(required).filter(([, present]) => !present).map(([name]) => name),
+      validation_status: post.validation?.status || 'UNKNOWN',
       media_count: post.media?.length || 0,
       visible_comment_count: post.visible_comments?.length || 0,
       contact_count: (post.contacts?.phones?.length || 0) + (post.contacts?.emails?.length || 0)
@@ -344,49 +420,75 @@
 
   function extractPost(container, index, config) {
     const permalink = postPermalink(container);
-    const mediaId = postIdFromMedia(container);
-    const postId = permalink.url?.match(/(?:posts|permalink)\/(\d+)/)?.[1] || mediaId;
+    const postId = permalink.post_id;
     const author = authorInfo(container, config);
     const textNodes = uniqueStrings([...container.querySelectorAll('[dir="auto"]')]
       .map((node) => cleanText(node.textContent))
       .filter((value) => value && !UI_TEXT.test(value)), 200);
     const visibleContext = textNodes.join('\n');
     const primary = primaryPostText(container);
-    const primaryText = primary.text || visibleContext;
+    const primaryText = primary.text;
     const time = timestampInfo(container, permalink.anchor);
-    const demand = classifyDemand(primaryText);
-    const allowContacts = config.collect_public_contacts && config.privacy_mode !== 'redacted';
-    const extractedContacts = extractContacts(primaryText, allowContacts);
-    const contacts = config.demand_only_contacts && !demand.is_demand
-      ? { phones: [], emails: [] }
-      : extractedContacts;
-    const fallbackId = textHash(`${groupKey()}|${author.author_name || ''}|${primaryText}`);
     const names = author.names_for_redaction;
     const post = {
       ordinal: index + 1,
-      post_id: postId || fallbackId,
-      post_url: postId ? `https://www.facebook.com/groups/${groupKey()}/posts/${postId}/` : permalink.url,
+      post_id: postId,
+      post_url: permalink.post_url,
       posted_at_text: time.text,
       posted_at_iso: time.iso,
+      posted_at_confidence: time.confidence,
       author_name: author.author_name,
       author_url: author.author_url,
-      text: protect(primaryText, config, names),
+      text: protect(primaryText || '', config, names) || null,
+      body: {
+        text: protect(primaryText || '', config, names) || null,
+        source: primary.source,
+        is_original: primary.is_original,
+        substituted_from_comment: false
+      },
       visible_context_text: protect(visibleContext, config, names),
-      content_fingerprint: textHash(normalizeForFingerprint(primaryText)),
-      demand,
-      contacts,
+      content_fingerprint: primaryText ? textHash(normalizeForFingerprint(primaryText)) : null,
+      demand: { status: 'not_classified_extraction_invalid', is_demand: false, score: null, category: null, signals: [] },
+      contacts: { phones: [], emails: [] },
       engagement: engagement(container),
       media: mediaItems(container),
       visible_comments: extractVisibleComments(container, config, names),
       has_see_more: [...container.querySelectorAll('[role="button"], button')]
+        .filter((button) => {
+          const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
+          const closestArticle = button.closest('[role="article"]');
+          return !outerArticle || !closestArticle || closestArticle === outerArticle;
+        })
         .some((button) => /^(Xem thêm|See more)$/i.test(cleanText(button.textContent))),
       raw_snapshot: rawSnapshot(container, config, names),
       extraction: {
         text_source: primary.source,
         permalink_source: permalink.source,
-        timestamp_source: time.source
-      }
+        timestamp_source: time.source,
+        timestamp_confidence: time.confidence
+      },
+      provenance: verifiedContainerProvenance(container, permalink)
     };
+    post.validation = Core.validatePost(post);
+    if (post.validation.is_valid) {
+      post.demand = classifyDemand(primaryText);
+      const allowContacts = config.collect_public_contacts && config.privacy_mode !== 'redacted';
+      const extractedContacts = extractContacts(primaryText, allowContacts);
+      post.contacts = config.demand_only_contacts && !post.demand.is_demand
+        ? { phones: [], emails: [] }
+        : extractedContacts;
+    } else {
+      post.extraction_failure = {
+        reasons: post.validation.reasons,
+        diagnostics: {
+          body_source: primary.source,
+          identity_source: permalink.source,
+          post_controls_observed: post.provenance.post_controls_observed,
+          visible_comment_count: post.visible_comments.length
+        },
+        sanitized_dom_snapshot: sanitizedDomSnapshot(container)
+      };
+    }
     post.data_completeness = dataCompleteness(post);
     return post;
   }
@@ -436,19 +538,28 @@
         timestamp_source: existing.posted_at_text || existing.posted_at_iso
           ? existing.extraction?.timestamp_source : incoming.extraction?.timestamp_source
       },
+      body: existing.body?.is_original ? existing.body : incoming.body,
+      provenance: (existing.provenance?.identity_confidence || 0) >= (incoming.provenance?.identity_confidence || 0)
+        ? existing.provenance : incoming.provenance,
       ordinal: existing.ordinal
     };
     for (const field of ['reaction_count', 'comment_count', 'share_count']) {
       if (merged.engagement[field] < 0) merged.engagement[field] = null;
     }
-    merged.content_fingerprint = textHash(normalizeForFingerprint(merged.text));
-    merged.demand = classifyDemand(merged.text);
-    if (!merged.demand.is_demand && config?.demand_only_contacts) merged.contacts = { phones: [], emails: [] };
+    merged.content_fingerprint = merged.text ? textHash(normalizeForFingerprint(merged.text)) : null;
+    merged.validation = Core.validatePost(merged);
+    merged.demand = merged.validation.is_valid
+      ? classifyDemand(merged.text)
+      : { status: 'not_classified_extraction_invalid', is_demand: false, score: null, category: null, signals: [] };
+    if (!merged.validation.is_valid || (!merged.demand.is_demand && config?.demand_only_contacts)) {
+      merged.contacts = { phones: [], emails: [] };
+    }
     merged.data_completeness = dataCompleteness(merged);
     return merged;
   }
 
   function upsertPost(posts, incoming, config) {
+    if (!incoming.validation?.is_valid) return false;
     let existingKey = posts.has(incoming.post_id) ? incoming.post_id : null;
     if (!existingKey) {
       for (const [key, value] of posts.entries()) {
@@ -461,12 +572,39 @@
     const merged = richerPost(existingKey ? posts.get(existingKey) : null, incoming, config);
     if (existingKey && existingKey !== merged.post_id) posts.delete(existingKey);
     posts.set(merged.post_id, merged);
+    return true;
+  }
+
+  async function reportExtractionFailures(failures) {
+    const fresh = failures.filter((failure) => {
+      const signature = `${failure.group_key}|${failure.post_id || 'missing'}|${failure.validation?.status}|${failure.validation?.reasons?.join(',')}`;
+      if (reportedExtractionFailures.has(signature)) return false;
+      reportedExtractionFailures.add(signature);
+      return true;
+    }).slice(0, 20);
+    if (!fresh.length) return;
+    await chrome.runtime.sendMessage({
+      action: 'reportExtractionFailures',
+      failures: fresh.map((post) => ({
+        group_key: groupKey(),
+        post_id: post.post_id,
+        post_url: post.post_url,
+        validation: post.validation,
+        diagnostics: post.extraction_failure?.diagnostics,
+        sanitized_dom_snapshot: post.extraction_failure?.sanitized_dom_snapshot
+      }))
+    });
   }
 
   async function expandSeeMore(containers) {
     let clicks = 0;
     for (const container of containers) {
+      const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
       const buttons = [...container.querySelectorAll('[role="button"], button')]
+        .filter((button) => {
+          const closestArticle = button.closest('[role="article"]');
+          return !outerArticle || !closestArticle || closestArticle === outerArticle;
+        })
         .filter((button) => /^(Xem thêm|See more)$/i.test(cleanText(button.textContent)));
       for (const button of buttons.slice(0, 3)) {
         button.click();
@@ -570,7 +708,7 @@
     return state;
   }
 
-  async function checkpoint(posts, round, noNewRounds, recoveryCount) {
+  async function checkpoint(posts, round, noNewRounds, recoveryCount, extractionFailures = []) {
     return chrome.runtime.sendMessage({
       action: 'checkpointGroupProgress',
       progress: {
@@ -579,6 +717,9 @@
         round,
         no_new_rounds: noNewRounds,
         recovery_count: recoveryCount,
+        valid_post_count: posts.size,
+        invalid_observation_count: extractionFailures.length,
+        extraction_failures: extractionFailures.slice(-100),
         posts: [...posts.values()]
       }
     });
@@ -590,7 +731,10 @@
     try {
       const config = initialState.config;
       const saved = initialState.partial_results?.[groupKey()];
-      const posts = new Map((saved?.posts || []).map((post) => [post.post_id, post]));
+      const posts = new Map((saved?.posts || [])
+        .filter((post) => post.validation?.is_valid && Core.validatePost(post).is_valid)
+        .map((post) => [post.post_id, post]));
+      const extractionFailures = [...(saved?.extraction_failures || [])].slice(-100);
       let noNewRounds = saved?.no_new_rounds || 0;
       let round = saved?.round || 0;
       let recoveryCount = saved?.recovery_count || 0;
@@ -602,17 +746,35 @@
         const before = posts.size;
         const containers = postContainers();
         if (config.click_see_more) await expandSeeMore(containers);
-        containers.map((container, index) => extractPost(container, index, config))
+        const observations = containers.map((container, index) => extractPost(container, index, config));
+        const failures = observations.filter((post) => !post.validation?.is_valid);
+        for (const failure of failures) {
+          const record = {
+            observed_at: new Date().toISOString(),
+            post_id: failure.post_id,
+            post_url: failure.post_url,
+            validation: failure.validation,
+            diagnostics: failure.extraction_failure?.diagnostics,
+            sanitized_dom_snapshot: failure.extraction_failure?.sanitized_dom_snapshot
+          };
+          const signature = `${record.post_id || 'missing'}|${record.validation.status}|${record.validation.reasons.join(',')}`;
+          if (!extractionFailures.some((item) => item.signature === signature)) {
+            extractionFailures.push({ signature, ...record });
+          }
+        }
+        if (extractionFailures.length > 100) extractionFailures.splice(0, extractionFailures.length - 100);
+        await reportExtractionFailures(failures);
+        observations.filter((post) => post.validation?.is_valid)
           .forEach((post) => upsertPost(posts, post, config));
         noNewRounds = posts.size === before ? noNewRounds + 1 : 0;
         round += 1;
-        statusBadge(`Collector raw: ${groupKey()} — ${posts.size}/${config.minimum_unique_posts_per_group} bài, vòng ${round}, chờ mới ${noNewRounds}/${config.saturation_rounds}`);
-        if (round % config.checkpoint_every_rounds === 0) await checkpoint(posts, round, noNewRounds, recoveryCount);
+        statusBadge(`Collector VALID: ${groupKey()} — ${posts.size}/${config.minimum_unique_posts_per_group} bài, INVALID/PARTIAL ${extractionFailures.length}, vòng ${round}, chờ mới ${noNewRounds}/${config.saturation_rounds}`);
+        if (round % config.checkpoint_every_rounds === 0) await checkpoint(posts, round, noNewRounds, recoveryCount, extractionFailures);
 
         if (noNewRounds >= config.saturation_rounds) {
           recoveryCount += 1;
           noNewRounds = 0;
-          await checkpoint(posts, round, noNewRounds, recoveryCount);
+          await checkpoint(posts, round, noNewRounds, recoveryCount, extractionFailures);
           const joinButton = [...document.querySelectorAll('button, [role="button"]')]
             .some((button) => /^(Tham gia nhóm|Join group|Yêu cầu tham gia|Request to join)$/i.test(cleanText(button.textContent)));
           if (posts.size === 0 && joinButton && recoveryCount >= 2) {
@@ -622,6 +784,7 @@
               stop_reason: 'inaccessible_group_skipped',
               rounds: round,
               recovery_count: recoveryCount,
+              extraction_failures: extractionFailures,
               join_required: true,
               posts: []
             };
@@ -633,7 +796,7 @@
           window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
           await wait(Math.max(config.maximum_wait_ms, 3000));
           if (recoveryCount % 3 === 0) {
-            await checkpoint(posts, round, noNewRounds, recoveryCount);
+            await checkpoint(posts, round, noNewRounds, recoveryCount, extractionFailures);
             location.reload();
             return;
           }
@@ -645,13 +808,14 @@
         await wait(delay);
       }
 
-      await checkpoint(posts, round, noNewRounds, recoveryCount);
+      await checkpoint(posts, round, noNewRounds, recoveryCount, extractionFailures);
       const result = {
         ...groupMetadata(),
         collected_at: new Date().toISOString(),
         stop_reason: 'target_reached',
         rounds: round,
         recovery_count: recoveryCount,
+        extraction_failures: extractionFailures,
         join_required: false,
         posts: [...posts.values()]
       };
@@ -667,7 +831,7 @@
     maximum_comments_per_post: 10, collect_raw_snapshot: true
   }) {
     return {
-      schema_version: '0.6.3',
+      schema_version: '0.7.0',
       collected_at: new Date().toISOString(),
       ...groupMetadata(),
       scope: 'visible_posts_only',

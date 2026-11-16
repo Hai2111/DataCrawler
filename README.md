@@ -13,12 +13,14 @@ Chrome Manifest V3 tooling for user-initiated research of Facebook Groups that t
 
 - Sequential collection from supplied Facebook Group URLs.
 - Resumable checkpoints and configurable post/group targets.
-- Demand detection and public contact extraction for demand posts.
+- Validation-gated demand detection and public contact extraction for `VALID` posts only.
 - Cross-group content de-duplication.
-- Per-post extraction provenance and missing-field reporting.
+- Top-level post-body/comment isolation, canonical identity validation, timestamp confidence and sanitized failure diagnostics.
 - Optional export to a user-selected directory, with a Downloads fallback.
 
 See [the extension README](facebook-group-probe-extension/README.md) for installation, privacy modes, output schema and limitations.
+
+Run `node --test tests/extractor-core.test.js` for the 20-case extraction regression suite. See [the v0.7.0 validation report](reports/extraction-validation-v0.7.0.md) for manual-review precision, coverage and failure analysis.
 
 ## Privacy and boundaries
 
