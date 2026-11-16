@@ -25,3 +25,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 output { display: block; min-height: 34px; margin-top: 10px; border-radius: 6px; background: #eef2f7; padding: 8px; color: #4b5563; white-space: pre-wrap; overflow-wrap: anywhere; }
 output[data-kind="error"] { background: #fee2e2; color: #991b1b; }
 output[data-kind="success"] { background: #dcfce7; color: #166534; }
+.debug-panel { margin-top: 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: white; }
+.debug-panel summary { padding: 8px; cursor: pointer; font-weight: 700; }
+.debug-panel summary span { color: #6b7280; font-weight: 500; }
+.debug-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 8px 7px; }
+#debug-log { max-height: 230px; margin: 0; padding: 8px; overflow: auto; border-top: 1px solid #e5e7eb; background: #111827; color: #d1fae5; font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }

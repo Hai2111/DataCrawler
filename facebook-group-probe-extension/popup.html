@@ -9,7 +9,7 @@
   <body>
     <main>
       <header>
-        <h1>Facebook Demand Collector <small>v0.6</small></h1>
+        <h1>Facebook Demand Collector <small>v0.6.1</small></h1>
         <span id="run-state" class="pill">Sẵn sàng</span>
       </header>
       <label for="groups">URL Facebook Group — mỗi dòng một URL</label>
@@ -55,6 +55,14 @@
         <button id="download-last">Tải kết quả gần nhất</button>
       </div>
       <output id="status" aria-live="polite"></output>
+      <details class="debug-panel" open>
+        <summary>Nhật ký debug <span id="log-count">0</span></summary>
+        <div class="debug-actions">
+          <button id="copy-log" type="button">Sao chép log</button>
+          <button id="clear-log" type="button">Xóa log</button>
+        </div>
+        <pre id="debug-log" aria-live="polite">Chưa có log.</pre>
+      </details>
     </main>
     <script src="popup.js"></script>
   </body>

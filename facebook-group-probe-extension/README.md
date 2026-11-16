@@ -1,4 +1,4 @@
-# Facebook URL Demand Collector v0.6
+# Facebook URL Demand Collector v0.6.1
 
 Chrome Manifest V3 extension for a user-started, read-only research session on Facebook content the signed-in user can already access.
 
@@ -16,6 +16,8 @@ Version 0.5 enriches each post across repeated observations instead of replacing
 Version 0.6 treats saturation as a recovery signal, not a completion condition. It scrolls to the feed end, periodically reloads and resumes from the saved checkpoint until the configured post target is reached. Running checkpoint files may be exported every N collected posts and after each completed group without stopping the session.
 
 The popup shows current-group progress, total posts retained, completed groups and recovery attempts. **Xuất checkpoint ngay — không dừng** writes a snapshot while leaving the collector running.
+
+Version 0.6.1 adds a persistent debug log to the popup and every exported JSON payload. It records session lifecycle, per-group scan counts, total retained posts, completed groups, recovery attempts and export destinations without logging post text or contact values. The popup can copy or clear the latest 500 entries.
 
 The defaults are up to 10 groups and 100 posts per group. A temporary feed saturation no longer ends a group: the collector keeps recovering and retrying until the target is reached or the user presses **Dừng & xuất**. A group that remains inaccessible behind a join/request screen is recorded as incomplete and skipped so the URL queue can continue.
 
@@ -53,7 +55,7 @@ The recommended `contacts_only` mode:
 - Chrome may require the directory to be selected again after a browser restart or permission reset.
 - If direct writing is unavailable, the extension automatically falls back to `Downloads/FacebookDemandCollector`.
 
-## Output schema 0.6
+## Output schema 0.6.1
 
 The downloaded JSON contains:
 
@@ -66,3 +68,4 @@ The downloaded JSON contains:
 - `contact_leads` with public phones/emails found in demand posts;
 - per-post `extraction` sources and `data_completeness` flags;
 - run totals, configuration and errors.
+- `debug_log` with timestamped collection counters, recovery and export events.

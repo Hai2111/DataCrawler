@@ -667,7 +667,7 @@
     maximum_comments_per_post: 10, collect_raw_snapshot: true
   }) {
     return {
-      schema_version: '0.6',
+      schema_version: '0.6.1',
       collected_at: new Date().toISOString(),
       ...groupMetadata(),
       scope: 'visible_posts_only',
@@ -714,5 +714,18 @@
     chrome.runtime.sendMessage({ action: 'startUrlSession' });
   }, true);
 
-  resumeIfNeeded().catch((error) => statusBadge(`Collector lỗi: ${error.message}`));
+  resumeIfNeeded().catch(async (error) => {
+    statusBadge(`Collector lỗi: ${error.message}`);
+    try {
+      await chrome.runtime.sendMessage({
+        action: 'reportCollectorError',
+        stage: 'resume_or_collect',
+        group_key: groupKey(),
+        page_url: location.href,
+        error: error.message || String(error)
+      });
+    } catch (reportError) {
+      console.error('[Facebook Demand Collector] Could not report collector error.', reportError);
+    }
+  });
 })();

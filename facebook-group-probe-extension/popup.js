@@ -10,12 +10,34 @@ const elements = {
   collectComments: document.querySelector('#collect-comments'),
   rawSnapshot: document.querySelector('#raw-snapshot'),
   state: document.querySelector('#run-state'),
-  status: document.querySelector('#status')
+  status: document.querySelector('#status'),
+  debugLog: document.querySelector('#debug-log'),
+  logCount: document.querySelector('#log-count')
 };
+
+let latestDebugLog = [];
 
 function setStatus(message, kind = '') {
   elements.status.textContent = message;
   elements.status.dataset.kind = kind;
+}
+
+function formatLogEntry(entry) {
+  const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString('vi-VN', { hour12: false }) : '--:--:--';
+  const details = Object.entries(entry)
+    .filter(([key, value]) => !['sequence', 'timestamp', 'level', 'event'].includes(key) && value !== null && value !== undefined)
+    .map(([key, value]) => `${key}=${typeof value === 'object' ? JSON.stringify(value) : value}`)
+    .join(' ');
+  return `${time} [${String(entry.level || 'info').toUpperCase()}] ${entry.event || 'event'}${details ? ` | ${details}` : ''}`;
+}
+
+function renderDebugLog(log = []) {
+  latestDebugLog = Array.isArray(log) ? log : [];
+  elements.logCount.textContent = `(${latestDebugLog.length})`;
+  elements.debugLog.textContent = latestDebugLog.length
+    ? latestDebugLog.map(formatLogEntry).join('\n')
+    : 'Chưa có log.';
+  elements.debugLog.scrollTop = elements.debugLog.scrollHeight;
 }
 
 function optionsFromForm() {
@@ -103,6 +125,7 @@ async function renderDirectoryName() {
 }
 
 function renderState(state) {
+  renderDebugLog(state?.debug_log || []);
   if (!state?.running) {
     elements.state.textContent = state?.phase === 'finished' ? 'Đã hoàn tất' : 'Sẵn sàng';
     elements.state.dataset.state = 'idle';
@@ -223,6 +246,20 @@ document.querySelector('#export-now').addEventListener('click', async () => {
       : response.error,
     response.ok ? 'success' : 'error'
   );
+});
+
+document.querySelector('#copy-log').addEventListener('click', async () => {
+  const text = latestDebugLog.map(formatLogEntry).join('\n');
+  if (!text) return setStatus('Chưa có log để sao chép.', 'error');
+  await navigator.clipboard.writeText(text);
+  setStatus(`Đã sao chép ${latestDebugLog.length} dòng log.`, 'success');
+});
+
+document.querySelector('#clear-log').addEventListener('click', async () => {
+  const response = await chrome.runtime.sendMessage({ action: 'clearDebugLog' });
+  if (!response.ok) return setStatus(response.error, 'error');
+  renderState(response.state);
+  setStatus('Đã xóa nhật ký debug.', 'success');
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
