@@ -1,0 +1,5 @@
+Reconnaissance is blocked at browser attachment; no Facebook DOM or account data was accessed.
+
+Created the requested artifacts in [fb_ui_probe](D:\codex\DataCollector\fb_ui_probe), including [reconnaissance_report.md](D:\codex\DataCollector\fb_ui_probe\reconnaissance_report.md).
+
+The existing Chrome Facebook window is visible, but the browser automation host is unavailable and local CDP port 9222 is not listening. Attach the existing logged-in Chrome/Edge profile via the browser bridge or CDP, then rerun this scan.

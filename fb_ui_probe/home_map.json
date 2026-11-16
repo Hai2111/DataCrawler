@@ -1,0 +1,10 @@
+{
+  "scan_status": "BROWSER_ATTACH_REQUIRED",
+  "connection": {
+    "existing_browser_window": "Google Chrome — Facebook",
+    "browser_automation_bridge": "unavailable",
+    "cdp_port_9222": "not listening"
+  },
+  "selectors": {},
+  "notes": "No Facebook DOM was accessed. Selector candidates must be derived only after attaching to the logged-in browser tab."
+}

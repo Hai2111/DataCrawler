@@ -1,0 +1,7 @@
+{
+  "scan_status": "BROWSER_ATTACH_REQUIRED",
+  "group_navigation": null,
+  "group_page": null,
+  "selectors": {},
+  "notes": "Groups was not opened because the existing logged-in Chrome tab was not controllable."
+}

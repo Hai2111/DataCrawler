@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Facebook URL Demand Collector",
+  "version": "0.5.0",
+  "description": "URL-driven, resumable group post collection with demand detection, public contact extraction and deduplication.",
+  "permissions": ["activeTab", "downloads", "storage", "tabs", "unlimitedStorage"],
+  "action": {
+    "default_title": "Facebook Demand Collector",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "export-visible-posts": {
+      "suggested_key": {
+        "default": "Alt+Shift+Y"
+      },
+      "description": "Start the configured group URL collection session"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.facebook.com/groups/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

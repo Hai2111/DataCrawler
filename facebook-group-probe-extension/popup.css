@@ -1,0 +1,27 @@
+:root { color-scheme: light; font: 13px/1.4 system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { width: 390px; margin: 0; color: #1c1e21; background: #f7f8fa; }
+main { padding: 14px; }
+header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+h1 { margin: 0; font-size: 17px; }
+h1 small { color: #6b7280; font-size: 11px; }
+label { display: block; margin-top: 9px; color: #374151; font-weight: 600; }
+textarea, input, select { width: 100%; margin-top: 4px; border: 1px solid #cbd5e1; border-radius: 6px; background: white; padding: 7px; font: inherit; }
+textarea { resize: vertical; white-space: pre; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.check { display: flex; align-items: center; gap: 7px; margin-top: 7px; font-weight: 500; }
+.check input { width: auto; margin: 0; }
+.hint { margin: 5px 0 8px; color: #6b7280; font-size: 11px; }
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 12px; }
+.actions.secondary { grid-template-columns: 1fr; margin-top: 7px; }
+.directory-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 5px; }
+button { padding: 8px 9px; border: 1px solid #cbd5e1; border-radius: 6px; background: white; cursor: pointer; font-weight: 650; }
+button.primary { border-color: #1877f2; background: #1877f2; color: white; }
+button.danger { border-color: #dc2626; color: #b91c1c; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.pill { padding: 3px 8px; border-radius: 999px; background: #e5e7eb; color: #374151; font-size: 11px; font-weight: 700; }
+.pill[data-state="running"] { background: #dcfce7; color: #166534; }
+.pill[data-state="paused"] { background: #fef3c7; color: #92400e; }
+output { display: block; min-height: 34px; margin-top: 10px; border-radius: 6px; background: #eef2f7; padding: 8px; color: #4b5563; white-space: pre-wrap; overflow-wrap: anywhere; }
+output[data-kind="error"] { background: #fee2e2; color: #991b1b; }
+output[data-kind="success"] { background: #dcfce7; color: #166534; }

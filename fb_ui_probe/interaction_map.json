@@ -1,0 +1,5 @@
+{
+  "scan_status": "BROWSER_ATTACH_REQUIRED",
+  "interactions": [],
+  "notes": "No interactions were attempted because a live DOM attachment is required before safe selector verification."
+}
