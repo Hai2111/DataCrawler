@@ -9,7 +9,7 @@
   <body>
     <main>
       <header>
-        <h1>Facebook Demand Collector <small>v0.6.2</small></h1>
+        <h1>Facebook Demand Collector <small>v0.6.3</small></h1>
         <span id="run-state" class="pill">Sẵn sàng</span>
       </header>
       <label for="groups">URL Facebook Group — mỗi dòng một URL</label>
@@ -44,6 +44,8 @@
       <label class="check"><input id="click-see-more" type="checkbox" checked /> Mở “Xem thêm”</label>
       <label class="check"><input id="collect-comments" type="checkbox" checked /> Lưu bình luận đang hiển thị</label>
       <label class="check"><input id="raw-snapshot" type="checkbox" /> Lưu raw snapshot (tăng dung lượng)</label>
+      <label class="check"><input id="developer-mode" type="checkbox" checked /> Developer mode: gửi log realtime về project</label>
+      <p id="dev-log-status" class="hint">Đang kiểm tra dev log bridge…</p>
       <div class="actions">
         <button id="start" class="primary">Quét danh sách URL</button>
         <button id="pause">Tạm dừng</button>

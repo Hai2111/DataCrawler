@@ -667,7 +667,7 @@
     maximum_comments_per_post: 10, collect_raw_snapshot: true
   }) {
     return {
-      schema_version: '0.6.2',
+      schema_version: '0.6.3',
       collected_at: new Date().toISOString(),
       ...groupMetadata(),
       scope: 'visible_posts_only',

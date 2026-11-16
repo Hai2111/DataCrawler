@@ -9,6 +9,7 @@ const elements = {
   clickSeeMore: document.querySelector('#click-see-more'),
   collectComments: document.querySelector('#collect-comments'),
   rawSnapshot: document.querySelector('#raw-snapshot'),
+  developerMode: document.querySelector('#developer-mode'),
   state: document.querySelector('#run-state'),
   status: document.querySelector('#status'),
   debugLog: document.querySelector('#debug-log'),
@@ -67,7 +68,8 @@ function optionsFromForm() {
       save_to_selected_directory: elements.saveSelectedDirectory.checked,
       click_see_more: elements.clickSeeMore.checked,
       collect_visible_comments: elements.collectComments.checked,
-      collect_raw_snapshot: elements.rawSnapshot.checked
+      collect_raw_snapshot: elements.rawSnapshot.checked,
+      developer_mode: elements.developerMode.checked
     }
   };
 }
@@ -133,6 +135,15 @@ async function renderDirectoryName() {
     : 'Chưa chọn — sẽ lưu vào Downloads/FacebookDemandCollector';
 }
 
+async function renderDevLogBridgeStatus() {
+  const label = document.querySelector('#dev-log-status');
+  const response = await chrome.runtime.sendMessage({ action: 'checkDevLogBridge' });
+  label.textContent = response.ok
+    ? `Dev log bridge: đã kết nối — ${response.log_file || 'debug_logs/extension-live.jsonl'}`
+    : `Dev log bridge: chưa kết nối (${response.error || 'server không phản hồi'})`;
+  label.dataset.kind = response.ok ? 'success' : 'error';
+}
+
 function renderState(state) {
   renderDebugLog(state?.debug_log || []);
   if (!state?.running) {
@@ -172,9 +183,11 @@ async function loadState() {
   elements.clickSeeMore.checked = settings.config?.click_see_more !== false;
   elements.collectComments.checked = settings.config?.collect_visible_comments !== false;
   elements.rawSnapshot.checked = settings.config?.collect_raw_snapshot === true;
+  elements.developerMode.checked = settings.config?.developer_mode !== false;
   document.querySelector('#download-last').disabled = !response.has_last_result;
   renderState(response.state);
   await renderDirectoryName();
+  await renderDevLogBridgeStatus();
   if (!response.state?.running && response.last_export?.ok) {
     const destination = response.last_export.destination === 'selected_directory'
       ? `${response.last_export.directory_name}/${response.last_export.filename}`

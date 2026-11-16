@@ -12,6 +12,8 @@ textarea { resize: vertical; white-space: pre; }
 .check { display: flex; align-items: center; gap: 7px; margin-top: 7px; font-weight: 500; }
 .check input { width: auto; margin: 0; }
 .hint { margin: 5px 0 8px; color: #6b7280; font-size: 11px; }
+.hint[data-kind="success"] { color: #166534; }
+.hint[data-kind="error"] { color: #b91c1c; }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 12px; }
 .actions.secondary { grid-template-columns: 1fr; margin-top: 7px; }
 .directory-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 5px; }

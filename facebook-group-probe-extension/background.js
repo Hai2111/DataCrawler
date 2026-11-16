@@ -31,6 +31,7 @@ const DEFAULT_CONFIG = {
   save_to_selected_directory: true,
   checkpoint_export_every_posts: 100,
   export_after_each_group: true,
+  developer_mode: true,
   privacy_mode: 'contacts_only',
   checkpoint_every_rounds: 3
 };
@@ -85,12 +86,33 @@ function normalizeConfig(input = {}) {
     save_to_selected_directory: input.save_to_selected_directory !== false,
     checkpoint_export_every_posts: clampInteger(input.checkpoint_export_every_posts, 100, 0, 5000),
     export_after_each_group: input.export_after_each_group !== false,
+    developer_mode: input.developer_mode !== false,
     privacy_mode: ['redacted', 'contacts_only', 'full'].includes(input.privacy_mode) ? input.privacy_mode : 'contacts_only',
     checkpoint_every_rounds: clampInteger(input.checkpoint_every_rounds, 3, 1, 50)
   };
 }
 
 const MAX_DEBUG_LOG_ENTRIES = 500;
+const DEV_LOG_ENDPOINT = 'http://127.0.0.1:32145/log';
+
+async function forwardDebugLog(state, entry) {
+  if (!state?.config?.developer_mode) return;
+  try {
+    await fetch(DEV_LOG_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source: 'facebook-demand-collector',
+        schema_version: state.schema_version,
+        session_started_at: state.started_at || null,
+        mode: state.mode || null,
+        ...entry
+      })
+    });
+  } catch (error) {
+    console.warn('[Facebook Demand Collector] Dev log bridge unavailable.', error.message);
+  }
+}
 
 function addDebugLog(state, event, details = {}, level = 'info') {
   if (!state) return null;
@@ -104,6 +126,7 @@ function addDebugLog(state, event, details = {}, level = 'info') {
   state.debug_log_sequence = entry.sequence;
   state.debug_log = [...(state.debug_log || []), entry].slice(-MAX_DEBUG_LOG_ENTRIES);
   console[level === 'error' ? 'error' : level === 'warning' ? 'warn' : 'info']('[Facebook Demand Collector]', entry);
+  void forwardDebugLog(state, entry);
   return entry;
 }
 
@@ -246,7 +269,7 @@ function makePayload(state) {
   const demandPosts = uniquePosts.filter((post) => post.demand?.is_demand);
   const contactLeads = demandPosts.filter((post) => (post.contacts?.phones?.length || 0) + (post.contacts?.emails?.length || 0) > 0);
   return {
-    schema_version: '0.6.2',
+    schema_version: '0.6.3',
     scope: state.mode === 'url_auto'
       ? 'url_provided_accessible_facebook_group_demand_leads'
       : 'keyword_discovered_accessible_facebook_group_demand_leads',
@@ -293,7 +316,7 @@ async function startAutomatedSession(tabId, options = {}) {
   if (!keywords.length) throw new Error('Hãy nhập ít nhất một keyword tìm group.');
   const config = normalizeConfig(options.config);
   const state = {
-    schema_version: '0.6.2', mode: 'keyword_auto', phase: 'discovering', running: true,
+    schema_version: '0.6.3', mode: 'keyword_auto', phase: 'discovering', running: true,
     paused: false, stopped: false, tab_id: tabId,
     started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     keywords, current_keyword_index: 0, discovered_groups: [], target_groups: [], current_index: 0,
@@ -314,7 +337,7 @@ async function startUrlSession(tabId, options = {}) {
   // URL mode is exhaustive: every normalized URL in the supplied queue must be attempted.
   config.session_group_target = targetGroups.length;
   const state = {
-    schema_version: '0.6.2', mode: 'url_auto', phase: 'collecting', running: true,
+    schema_version: '0.6.3', mode: 'url_auto', phase: 'collecting', running: true,
     paused: false, stopped: false, tab_id: tabId,
     started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     keywords: [], current_keyword_index: 0, discovered_groups: [],
@@ -502,6 +525,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     savePayload(message.payload, message.filename_prefix || 'facebook-demand-leads', true).then(sendResponse);
     return true;
   }
+  if (message.action === 'checkDevLogBridge') {
+    fetch('http://127.0.0.1:32145/health')
+      .then(async (response) => sendResponse({ ok: response.ok, ...(await response.json()) }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
   if (message.action === 'downloadLastResult') {
     chrome.storage.local.get('fbCollectorLastResult').then(({ fbCollectorLastResult }) => {
       if (!fbCollectorLastResult) return sendResponse({ ok: false, error: 'Chưa có kết quả trước đó.' });
@@ -554,7 +583,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const state = result.fbCollectorState || null;
       if (state) {
         state.config = normalizeConfig(state.config || {});
-        state.schema_version = '0.6.2';
+        state.schema_version = '0.6.3';
         state.debug_log = Array.isArray(state.debug_log) ? state.debug_log.slice(-MAX_DEBUG_LOG_ENTRIES) : [];
         state.debug_log_sequence = Number.isFinite(state.debug_log_sequence)
           ? state.debug_log_sequence

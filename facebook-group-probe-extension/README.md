@@ -1,4 +1,4 @@
-# Facebook URL Demand Collector v0.6.2
+# Facebook URL Demand Collector v0.6.3
 
 Chrome Manifest V3 extension for a user-started, read-only research session on Facebook content the signed-in user can already access.
 
@@ -20,6 +20,8 @@ The popup shows current-group progress, total posts retained, completed groups a
 Version 0.6.1 adds a persistent debug log to the popup and every exported JSON payload. It records session lifecycle, per-group scan counts, total retained posts, completed groups, recovery attempts and export destinations without logging post text or contact values. The popup can copy or clear the latest 500 entries.
 
 Version 0.6.2 makes URL mode exhaustive. The completed-group target can no longer end a URL session early; inaccessible groups are recorded and skipped, and scanning continues with the next URL until every supplied URL has been attempted.
+
+Version 0.6.3 adds an opt-in local developer bridge. While developer mode is enabled, every debug event is forwarded immediately to `http://127.0.0.1:32145` and appended to `debug_logs/extension-live.jsonl` inside the project. The bridge listens only on localhost and does not receive post text or contact values.
 
 The default is 100 posts per group, with up to 50 unique supplied URLs per session. A temporary feed saturation no longer ends a group: the collector keeps recovering and retrying until the target is reached or the user presses **Dừng & xuất**. A group that remains inaccessible behind a join/request screen is recorded as incomplete and skipped so the URL queue can continue.
 
@@ -49,6 +51,16 @@ The recommended `contacts_only` mode:
 4. Open Facebook while signed in.
 5. Open the extension, paste the group URLs, review settings, then click **Quét danh sách URL**.
 
+## Realtime developer log
+
+1. Run `RUN_DEV_LOG_SERVER.bat` from the project root, or run `node tools/dev-log-server.js`.
+2. Reload the unpacked extension after upgrading.
+3. Keep **Developer mode: gửi log realtime về project** enabled in the popup.
+4. Confirm that the popup reports `Dev log bridge: đã kết nối`.
+5. Inspect `debug_logs/extension-live.jsonl` for the append-only event stream and `debug_logs/extension-live-latest.json` for the latest event.
+
+The local server binds to `127.0.0.1:32145` only. If it is not running, collection continues normally and the service worker prints a bridge warning to its console.
+
 ## Export directory
 
 - Click **Chọn thư mục** in the popup before starting the session.
@@ -57,7 +69,7 @@ The recommended `contacts_only` mode:
 - Chrome may require the directory to be selected again after a browser restart or permission reset.
 - If direct writing is unavailable, the extension automatically falls back to `Downloads/FacebookDemandCollector`.
 
-## Output schema 0.6.2
+## Output schema 0.6.3
 
 The downloaded JSON contains:
 

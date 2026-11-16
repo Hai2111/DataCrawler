@@ -10,4 +10,5 @@ facebook-visible-*.json
 .DS_Store
 Thumbs.db
 node_modules/
+debug_logs/
 
