@@ -5,6 +5,7 @@ Chrome Manifest V3 tooling for user-initiated research of Facebook Groups that t
 ## Project contents
 
 - `facebook-group-probe-extension/`: URL-driven Facebook Group collector.
+- `linkedin-post-collector-extension/`: URL-driven LinkedIn post/search/company-feed collector.
 - `analysis/`: scripts for inspecting collector exports and demand signals.
 - `fb_ui_probe/`: sanitized UI reconnaissance notes and selector maps.
 - `RUN_FB_UI_SCAN.bat` and `CODEX_FB_UI_SCAN.md`: optional one-pass UI reconnaissance workflow.
@@ -22,6 +23,8 @@ Chrome Manifest V3 tooling for user-initiated research of Facebook Groups that t
 See [the extension README](facebook-group-probe-extension/README.md) for installation, privacy modes, output schema and limitations.
 
 Run `node --test tests/extractor-core.test.js` for the 20-case extraction regression suite. See [the v0.7.0 validation report](reports/extraction-validation-v0.7.0.md) for manual-review precision, coverage and failure analysis.
+
+Run `node --test tests/linkedin-extractor-core.test.js` for LinkedIn Activity ID, validation, timestamp, number parsing and safe partial-merge regression tests.
 
 ## Privacy and boundaries
 

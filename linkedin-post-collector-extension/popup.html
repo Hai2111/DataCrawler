@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>LinkedIn Demand Collector</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <main>
+    <header><h1>LinkedIn Collector <small>v0.1.0</small></h1><span id="run-state">Sẵn sàng</span></header>
+    <label>URL LinkedIn — mỗi dòng một nguồn
+      <textarea id="urls" rows="7" placeholder="https://www.linkedin.com/search/results/content/?keywords=PCB&#10;https://www.linkedin.com/company/example/posts/"></textarea>
+    </label>
+    <div class="grid">
+      <label>Số URL<input id="url-count" type="number" readonly /></label>
+      <label>Bài VALID/URL<input id="post-target" type="number" min="1" max="1000" value="100" /></label>
+    </div>
+    <div class="grid">
+      <label>Xuất checkpoint mỗi N bài<input id="checkpoint-every" type="number" min="0" max="5000" value="100" /></label>
+      <label>Riêng tư
+        <select id="privacy"><option value="contacts_only">Contact only</option><option value="redacted">Ẩn toàn bộ contact</option><option value="full">Full visible data</option></select>
+      </label>
+    </div>
+    <label class="check"><input id="contacts" type="checkbox" checked /> Thu contact công khai trong bài nhu cầu</label>
+    <label class="check"><input id="selected-dir" type="checkbox" checked /> Lưu vào thư mục đã chọn</label>
+    <label class="check"><input id="developer-mode" type="checkbox" checked /> Gửi log realtime về project</label>
+    <div class="row"><button id="choose-dir">Chọn thư mục</button><button id="clear-dir" class="secondary">Bỏ thư mục</button></div>
+    <p id="dir-status" class="hint"></p>
+    <div class="row"><button id="start">Quét URL</button><button id="pause" class="secondary">Tạm dừng</button><button id="resume" class="secondary">Tiếp tục</button></div>
+    <div class="row"><button id="checkpoint" class="secondary">Xuất checkpoint</button><button id="stop" class="danger">Dừng & xuất</button><button id="download-last" class="secondary">Tải bản cuối</button></div>
+    <pre id="status">Chưa có phiên quét.</pre>
+    <p id="bridge-status" class="hint"></p>
+    <details><summary>Log <span id="log-count"></span></summary><pre id="logs">Chưa có log.</pre></details>
+    <p class="notice">Chỉ đọc nội dung hiển thị trong tài khoản hiện tại. Không tự kết nối, nhắn tin, bình luận hoặc vượt kiểm soát truy cập.</p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

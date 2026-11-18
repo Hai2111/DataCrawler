@@ -3,6 +3,8 @@ collected_data/
 facebook-demand-leads-*.json
 facebook-raw-research-*.json
 facebook-visible-*.json
+linkedin-demand-leads-*.json
+linkedin-demand-checkpoint-*.json
 
 # Local runtime artifacts
 *.log

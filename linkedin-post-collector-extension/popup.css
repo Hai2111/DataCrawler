@@ -1,0 +1,17 @@
+:root { color-scheme: light; font: 13px system-ui, sans-serif; }
+body { margin: 0; width: 440px; background: #f3f6f8; color: #1b1f23; }
+main { padding: 14px; }
+header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+h1 { font-size: 18px; margin: 0; color: #0a66c2; } h1 small { font-size: 11px; color: #667; }
+#run-state { padding: 4px 8px; border-radius: 999px; background: #dde7f1; }
+label { display: block; margin: 9px 0; font-weight: 600; }
+textarea, input, select { box-sizing: border-box; width: 100%; margin-top: 4px; padding: 8px; border: 1px solid #b9c4cf; border-radius: 6px; background: white; }
+textarea { resize: vertical; font: 12px ui-monospace, monospace; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.check { display: flex; align-items: center; gap: 7px; font-weight: 500; }.check input { width: auto; margin: 0; }
+.row { display: flex; gap: 7px; margin: 8px 0; }
+button { flex: 1; border: 0; border-radius: 6px; padding: 9px 7px; background: #0a66c2; color: white; font-weight: 650; cursor: pointer; }
+button.secondary { background: #e1e8ed; color: #26333d; } button.danger { background: #b42318; }
+pre { white-space: pre-wrap; word-break: break-word; background: #111a22; color: #d8edf9; padding: 9px; border-radius: 6px; max-height: 190px; overflow: auto; font-size: 11px; }
+.hint { color: #59636d; font-size: 11px; margin: 5px 0; }.notice { font-size: 11px; color: #59636d; border-top: 1px solid #d5dde3; padding-top: 9px; }
+summary { cursor: pointer; font-weight: 650; }
