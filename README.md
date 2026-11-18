@@ -16,6 +16,7 @@ Chrome Manifest V3 tooling for user-initiated research of Facebook Groups that t
 - Validation-gated demand detection and public contact extraction for `VALID` posts only.
 - Cross-group content de-duplication.
 - Top-level post-body/comment isolation, canonical identity validation, timestamp confidence and sanitized failure diagnostics.
+- Multi-pass viewport observation with safe `PARTIAL`-record correlation and overlapping scroll recovery.
 - Optional export to a user-selected directory, with a Downloads fallback.
 
 See [the extension README](facebook-group-probe-extension/README.md) for installation, privacy modes, output schema and limitations.

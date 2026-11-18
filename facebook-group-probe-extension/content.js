@@ -199,6 +199,17 @@
     for (const anchor of anchors) {
       const candidates = [anchor.textContent, anchor.getAttribute('aria-label'), anchor.title]
         .map(cleanText).filter(Boolean);
+      const absolute = candidates
+        .map((value) => Core.parseVietnameseAbsoluteDate(value))
+        .find((parsed) => parsed.iso);
+      if (absolute) {
+        return {
+          text: absolute.original_text,
+          iso: absolute.iso,
+          source: absolute.source,
+          confidence: absolute.confidence
+        };
+      }
       const text = candidates.find((value) => relativePattern.test(value) || absolutePattern.test(value));
       if (text) {
         const parsed = Core.parseVietnameseAbsoluteDate(text);
@@ -229,10 +240,21 @@
     const candidates = groupUserLinks.length ? groupUserLinks : profileLinks;
     const anchor = candidates.find((item) => cleanText(item.textContent));
     const name = cleanText(anchor?.textContent);
+    const correlationAuthorHash = anchor ? textHash(canonicalUrl(anchor.href, true) || anchor.getAttribute('href') || '') : null;
     if (config.privacy_mode !== 'full') {
-      return { author_name: name ? '[AUTHOR_REDACTED]' : null, author_url: null, names_for_redaction: [name] };
+      return {
+        author_name: name ? '[AUTHOR_REDACTED]' : null,
+        author_url: null,
+        names_for_redaction: [name],
+        correlation_author_hash: correlationAuthorHash
+      };
     }
-    return { author_name: name || null, author_url: anchor ? canonicalUrl(anchor.href) : null, names_for_redaction: [] };
+    return {
+      author_name: name || null,
+      author_url: anchor ? canonicalUrl(anchor.href) : null,
+      names_for_redaction: [],
+      correlation_author_hash: correlationAuthorHash
+    };
   }
 
   function parseCompactCount(label) {
@@ -430,6 +452,15 @@
     const primaryText = primary.text;
     const time = timestampInfo(container, permalink.anchor);
     const names = author.names_for_redaction;
+    const contentFingerprint = primaryText ? textHash(normalizeForFingerprint(primaryText)) : null;
+    const correlationEvidence = [
+      groupKey(),
+      author.correlation_author_hash || '',
+      time.iso || time.text || ''
+    ].join('|');
+    const correlationKey = author.correlation_author_hash && (time.iso || time.text)
+      ? textHash(correlationEvidence)
+      : (contentFingerprint ? `body-${contentFingerprint}` : null);
     const post = {
       ordinal: index + 1,
       post_id: postId,
@@ -446,8 +477,9 @@
         is_original: primary.is_original,
         substituted_from_comment: false
       },
+      correlation_key: correlationKey,
       visible_context_text: protect(visibleContext, config, names),
-      content_fingerprint: primaryText ? textHash(normalizeForFingerprint(primaryText)) : null,
+      content_fingerprint: contentFingerprint,
       demand: { status: 'not_classified_extraction_invalid', is_demand: false, score: null, category: null, signals: [] },
       contacts: { phones: [], emails: [] },
       engagement: engagement(container),
@@ -469,6 +501,17 @@
       },
       provenance: verifiedContainerProvenance(container, permalink)
     };
+    // Keep the unprotected original body in memory only so a later identity-only
+    // observation can complete validation and contact extraction. Non-enumerable
+    // data is never serialized into checkpoints, logs or exports.
+    if (primary.is_original && primaryText) {
+      Object.defineProperty(post, '_raw_original_text', {
+        value: primaryText,
+        enumerable: false,
+        configurable: true
+      });
+    }
+    post.observation_quality = Core.observationQuality(post);
     post.validation = Core.validatePost(post);
     if (post.validation.is_valid) {
       post.demand = classifyDemand(primaryText);
@@ -505,16 +548,22 @@
         return true;
       });
     };
+    const incomingTextIsRicher = cleanText(incoming.text).length > cleanText(existing.text).length;
+    const incomingTimeIsStronger = (incoming.posted_at_confidence || 0) > (existing.posted_at_confidence || 0);
+    const rawOriginalText = incomingTextIsRicher
+      ? (incoming._raw_original_text || existing._raw_original_text)
+      : (existing._raw_original_text || incoming._raw_original_text);
     const merged = {
       ...existing,
-      post_id: String(existing.post_id || '').startsWith('text-') && !String(incoming.post_id || '').startsWith('text-')
-        ? incoming.post_id : existing.post_id,
+      post_id: existing.post_id || incoming.post_id,
       post_url: existing.post_url || incoming.post_url,
-      posted_at_text: existing.posted_at_text || incoming.posted_at_text,
-      posted_at_iso: existing.posted_at_iso || incoming.posted_at_iso,
+      posted_at_text: incomingTimeIsStronger ? incoming.posted_at_text : (existing.posted_at_text || incoming.posted_at_text),
+      posted_at_iso: incomingTimeIsStronger ? incoming.posted_at_iso : (existing.posted_at_iso || incoming.posted_at_iso),
+      posted_at_confidence: Math.max(existing.posted_at_confidence || 0, incoming.posted_at_confidence || 0),
       author_name: existing.author_name || incoming.author_name,
       author_url: existing.author_url || incoming.author_url,
       text: chooseText(existing.text, incoming.text),
+      correlation_key: existing.correlation_key || incoming.correlation_key,
       visible_context_text: chooseText(existing.visible_context_text, incoming.visible_context_text),
       media: unionBy(existing.media, incoming.media, (item) => item.url),
       visible_comments: unionBy(existing.visible_comments, incoming.visible_comments, (item) => item.url || item.text),
@@ -532,26 +581,43 @@
       raw_snapshot: (incoming.raw_snapshot?.inner_text?.length || 0) > (existing.raw_snapshot?.inner_text?.length || 0)
         ? incoming.raw_snapshot : existing.raw_snapshot,
       extraction: {
-        text_source: cleanText(incoming.text).length > cleanText(existing.text).length
+        text_source: incomingTextIsRicher
           ? incoming.extraction?.text_source : existing.extraction?.text_source,
         permalink_source: existing.post_url ? existing.extraction?.permalink_source : incoming.extraction?.permalink_source,
         timestamp_source: existing.posted_at_text || existing.posted_at_iso
           ? existing.extraction?.timestamp_source : incoming.extraction?.timestamp_source
       },
-      body: existing.body?.is_original ? existing.body : incoming.body,
+      body: incomingTextIsRicher && incoming.body?.is_original
+        ? incoming.body
+        : (existing.body?.is_original ? existing.body : incoming.body),
       provenance: (existing.provenance?.identity_confidence || 0) >= (incoming.provenance?.identity_confidence || 0)
         ? existing.provenance : incoming.provenance,
       ordinal: existing.ordinal
     };
+    if (rawOriginalText) {
+      Object.defineProperty(merged, '_raw_original_text', {
+        value: rawOriginalText,
+        enumerable: false,
+        configurable: true
+      });
+    }
     for (const field of ['reaction_count', 'comment_count', 'share_count']) {
       if (merged.engagement[field] < 0) merged.engagement[field] = null;
     }
     merged.content_fingerprint = merged.text ? textHash(normalizeForFingerprint(merged.text)) : null;
+    merged.observation_quality = Core.observationQuality(merged);
     merged.validation = Core.validatePost(merged);
+    const validatedText = rawOriginalText || merged.text;
     merged.demand = merged.validation.is_valid
-      ? classifyDemand(merged.text)
+      ? classifyDemand(validatedText)
       : { status: 'not_classified_extraction_invalid', is_demand: false, score: null, category: null, signals: [] };
-    if (!merged.validation.is_valid || (!merged.demand.is_demand && config?.demand_only_contacts)) {
+    if (merged.validation.is_valid) {
+      const allowContacts = config.collect_public_contacts && config.privacy_mode !== 'redacted';
+      const extractedContacts = extractContacts(validatedText, allowContacts);
+      merged.contacts = config.demand_only_contacts && !merged.demand.is_demand
+        ? { phones: [], emails: [] }
+        : extractedContacts;
+    } else {
       merged.contacts = { phones: [], emails: [] };
     }
     merged.data_completeness = dataCompleteness(merged);
@@ -575,9 +641,50 @@
     return true;
   }
 
+  function candidateStorageKey(post) {
+    if (post.post_id) return `id:${post.post_id}`;
+    if (post.correlation_key) return `corr:${post.correlation_key}`;
+    if (post.content_fingerprint) return `body:${post.content_fingerprint}`;
+    return null;
+  }
+
+  function upsertCandidate(candidates, incoming, config, round) {
+    let existingKey = null;
+    for (const [key, candidate] of candidates.entries()) {
+      if (Core.canMergePostObservations(candidate, incoming)) {
+        existingKey = key;
+        break;
+      }
+    }
+    const existing = existingKey ? candidates.get(existingKey) : null;
+    const merged = richerPost(existing, incoming, config);
+    merged.observation_count = (existing?.observation_count || 0) + 1;
+    merged.first_observed_round = existing?.first_observed_round ?? round;
+    merged.last_observed_round = round;
+    merged.validation = Core.validatePost(merged);
+    merged.data_completeness = dataCompleteness(merged);
+    if (merged.validation.is_valid) delete merged.extraction_failure;
+    const nextKey = candidateStorageKey(merged);
+    if (!nextKey) return merged;
+    if (existingKey && existingKey !== nextKey) candidates.delete(existingKey);
+    candidates.set(nextKey, merged);
+    return merged;
+  }
+
+  function pruneCandidates(candidates, round) {
+    for (const [key, candidate] of candidates.entries()) {
+      if (candidate.validation?.is_valid || round - (candidate.last_observed_round || 0) > 120) candidates.delete(key);
+    }
+    if (candidates.size <= 250) return;
+    const oldest = [...candidates.entries()]
+      .sort((left, right) => (left[1].last_observed_round || 0) - (right[1].last_observed_round || 0));
+    for (const [key] of oldest.slice(0, candidates.size - 250)) candidates.delete(key);
+  }
+
   async function reportExtractionFailures(failures) {
     const fresh = failures.filter((failure) => {
-      const signature = `${failure.group_key}|${failure.post_id || 'missing'}|${failure.validation?.status}|${failure.validation?.reasons?.join(',')}`;
+      const identity = failure.post_id || failure.correlation_key || failure.content_fingerprint || 'missing';
+      const signature = `${groupKey()}|${identity}|${failure.validation?.status}|${failure.validation?.reasons?.join(',')}`;
       if (reportedExtractionFailures.has(signature)) return false;
       reportedExtractionFailures.add(signature);
       return true;
@@ -708,7 +815,20 @@
     return state;
   }
 
-  async function checkpoint(posts, round, noNewRounds, recoveryCount, extractionFailures = []) {
+  function checkpointCandidate(candidate) {
+    return {
+      ...candidate,
+      visible_context_text: null,
+      visible_comments: [],
+      raw_snapshot: null,
+      extraction_failure: candidate.extraction_failure ? {
+        reasons: candidate.extraction_failure.reasons,
+        diagnostics: candidate.extraction_failure.diagnostics
+      } : null
+    };
+  }
+
+  async function checkpoint(posts, round, noNewRounds, recoveryCount, extractionFailures = [], candidates = new Map()) {
     return chrome.runtime.sendMessage({
       action: 'checkpointGroupProgress',
       progress: {
@@ -720,6 +840,8 @@
         valid_post_count: posts.size,
         invalid_observation_count: extractionFailures.length,
         extraction_failures: extractionFailures.slice(-100),
+        partial_candidate_count: candidates.size,
+        partial_candidates: [...candidates.values()].map(checkpointCandidate).slice(-250),
         posts: [...posts.values()]
       }
     });
@@ -734,6 +856,9 @@
       const posts = new Map((saved?.posts || [])
         .filter((post) => post.validation?.is_valid && Core.validatePost(post).is_valid)
         .map((post) => [post.post_id, post]));
+      const candidates = new Map((saved?.partial_candidates || [])
+        .map((post) => [candidateStorageKey(post), post])
+        .filter(([key]) => key));
       const extractionFailures = [...(saved?.extraction_failures || [])].slice(-100);
       let noNewRounds = saved?.no_new_rounds || 0;
       let round = saved?.round || 0;
@@ -743,12 +868,29 @@
       while (posts.size < config.minimum_unique_posts_per_group) {
         const state = await waitWhilePaused();
         if (!state?.running) return;
-        const before = posts.size;
-        const containers = postContainers();
-        if (config.click_see_more) await expandSeeMore(containers);
-        const observations = containers.map((container, index) => extractPost(container, index, config));
-        const failures = observations.filter((post) => !post.validation?.is_valid);
-        for (const failure of failures) {
+        const beforeScore = posts.size * 100 + [...candidates.values()]
+          .reduce((sum, candidate) => sum + Core.observationQuality(candidate), 0);
+        const viewportObservations = [];
+        for (let pass = 0; pass < config.observation_passes_per_viewport; pass += 1) {
+          const containers = postContainers();
+          if (config.click_see_more && pass === 0) await expandSeeMore(containers);
+          if (pass > 0 || config.click_see_more) await wait(config.viewport_settle_ms);
+          viewportObservations.push(...containers.map((container, index) => extractPost(container, index, config)));
+        }
+        const stableFailures = [];
+        for (const observation of viewportObservations) {
+          const candidate = upsertCandidate(candidates, observation, config, round);
+          if (candidate.validation?.is_valid) {
+            upsertPost(posts, candidate, config);
+            for (const [key, stored] of candidates.entries()) {
+              if (stored === candidate || Core.canMergePostObservations(stored, candidate)) candidates.delete(key);
+            }
+          } else if ((candidate.observation_count || 0) >= 2) {
+            stableFailures.push(candidate);
+          }
+        }
+        pruneCandidates(candidates, round);
+        for (const failure of stableFailures) {
           const record = {
             observed_at: new Date().toISOString(),
             post_id: failure.post_id,
@@ -757,24 +899,25 @@
             diagnostics: failure.extraction_failure?.diagnostics,
             sanitized_dom_snapshot: failure.extraction_failure?.sanitized_dom_snapshot
           };
-          const signature = `${record.post_id || 'missing'}|${record.validation.status}|${record.validation.reasons.join(',')}`;
+          const identity = failure.post_id || failure.correlation_key || failure.content_fingerprint || 'missing';
+          const signature = `${identity}|${record.validation.status}|${record.validation.reasons.join(',')}`;
           if (!extractionFailures.some((item) => item.signature === signature)) {
             extractionFailures.push({ signature, ...record });
           }
         }
         if (extractionFailures.length > 100) extractionFailures.splice(0, extractionFailures.length - 100);
-        await reportExtractionFailures(failures);
-        observations.filter((post) => post.validation?.is_valid)
-          .forEach((post) => upsertPost(posts, post, config));
-        noNewRounds = posts.size === before ? noNewRounds + 1 : 0;
+        await reportExtractionFailures(stableFailures);
+        const afterScore = posts.size * 100 + [...candidates.values()]
+          .reduce((sum, candidate) => sum + Core.observationQuality(candidate), 0);
+        noNewRounds = afterScore <= beforeScore ? noNewRounds + 1 : 0;
         round += 1;
-        statusBadge(`Collector VALID: ${groupKey()} — ${posts.size}/${config.minimum_unique_posts_per_group} bài, INVALID/PARTIAL ${extractionFailures.length}, vòng ${round}, chờ mới ${noNewRounds}/${config.saturation_rounds}`);
-        if (round % config.checkpoint_every_rounds === 0) await checkpoint(posts, round, noNewRounds, recoveryCount, extractionFailures);
+        statusBadge(`Collector VALID: ${groupKey()} — ${posts.size}/${config.minimum_unique_posts_per_group} bài, PARTIAL đang ghép ${candidates.size}, lỗi ổn định ${extractionFailures.length}, vòng ${round}, chờ mới ${noNewRounds}/${config.saturation_rounds}`);
+        if (round % config.checkpoint_every_rounds === 0) await checkpoint(posts, round, noNewRounds, recoveryCount, extractionFailures, candidates);
 
         if (noNewRounds >= config.saturation_rounds) {
           recoveryCount += 1;
           noNewRounds = 0;
-          await checkpoint(posts, round, noNewRounds, recoveryCount, extractionFailures);
+          await checkpoint(posts, round, noNewRounds, recoveryCount, extractionFailures, candidates);
           const joinButton = [...document.querySelectorAll('button, [role="button"]')]
             .some((button) => /^(Tham gia nhóm|Join group|Yêu cầu tham gia|Request to join)$/i.test(cleanText(button.textContent)));
           if (posts.size === 0 && joinButton && recoveryCount >= 2) {
@@ -796,19 +939,19 @@
           window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
           await wait(Math.max(config.maximum_wait_ms, 3000));
           if (recoveryCount % 3 === 0) {
-            await checkpoint(posts, round, noNewRounds, recoveryCount, extractionFailures);
+            await checkpoint(posts, round, noNewRounds, recoveryCount, extractionFailures, candidates);
             location.reload();
             return;
           }
           continue;
         }
 
-        window.scrollBy({ top: Math.max(window.innerHeight * 0.9, 680), behavior: 'smooth' });
+        window.scrollBy({ top: Math.max(window.innerHeight * config.viewport_scroll_ratio, 520), behavior: 'smooth' });
         const delay = config.minimum_wait_ms + Math.random() * (config.maximum_wait_ms - config.minimum_wait_ms);
         await wait(delay);
       }
 
-      await checkpoint(posts, round, noNewRounds, recoveryCount, extractionFailures);
+      await checkpoint(posts, round, noNewRounds, recoveryCount, extractionFailures, candidates);
       const result = {
         ...groupMetadata(),
         collected_at: new Date().toISOString(),
@@ -831,7 +974,7 @@
     maximum_comments_per_post: 10, collect_raw_snapshot: true
   }) {
     return {
-      schema_version: '0.7.0',
+      schema_version: '0.7.1',
       collected_at: new Date().toISOString(),
       ...groupMetadata(),
       scope: 'visible_posts_only',

@@ -155,6 +155,30 @@
     return validatePost(post).is_valid;
   }
 
+  function canMergePostObservations(left, right) {
+    if (!left || !right) return false;
+    if (left.post_id && right.post_id) return String(left.post_id) === String(right.post_id);
+    if (left.correlation_key && right.correlation_key) return left.correlation_key === right.correlation_key;
+    if (left.content_fingerprint && right.content_fingerprint && left.body?.is_original && right.body?.is_original) {
+      return left.content_fingerprint === right.content_fingerprint;
+    }
+    return false;
+  }
+
+  function observationQuality(post) {
+    if (!post) return 0;
+    let score = 0;
+    if (post.body?.is_original && cleanText(post.body.text)) score += 4;
+    if (/^\d+$/.test(String(post.post_id || ''))) score += 3;
+    if (post.post_url) score += 2;
+    if (post.posted_at_iso) score += 2;
+    else if (post.posted_at_text) score += 0.5;
+    if (post.provenance?.verified_top_level_container) score += 2;
+    if (post.author_name) score += 0.5;
+    if (post.media?.length) score += 0.5;
+    return score;
+  }
+
   return {
     TRUSTED_IDENTITY_SOURCES,
     cleanText,
@@ -163,6 +187,8 @@
     parseVietnameseNumber,
     selectOriginalPostBody,
     validatePost,
-    canClassifyDemand
+    canClassifyDemand,
+    canMergePostObservations,
+    observationQuality
   };
 });

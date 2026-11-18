@@ -33,7 +33,10 @@ const DEFAULT_CONFIG = {
   export_after_each_group: true,
   developer_mode: true,
   privacy_mode: 'contacts_only',
-  checkpoint_every_rounds: 3
+  checkpoint_every_rounds: 3,
+  observation_passes_per_viewport: 2,
+  viewport_settle_ms: 700,
+  viewport_scroll_ratio: 0.65
 };
 
 function normalizeGroupUrl(value) {
@@ -88,7 +91,10 @@ function normalizeConfig(input = {}) {
     export_after_each_group: input.export_after_each_group !== false,
     developer_mode: input.developer_mode !== false,
     privacy_mode: ['redacted', 'contacts_only', 'full'].includes(input.privacy_mode) ? input.privacy_mode : 'contacts_only',
-    checkpoint_every_rounds: clampInteger(input.checkpoint_every_rounds, 3, 1, 50)
+    checkpoint_every_rounds: clampInteger(input.checkpoint_every_rounds, 3, 1, 50),
+    observation_passes_per_viewport: clampInteger(input.observation_passes_per_viewport, 2, 1, 5),
+    viewport_settle_ms: clampInteger(input.viewport_settle_ms, 700, 250, 5000),
+    viewport_scroll_ratio: Math.min(0.95, Math.max(0.35, Number(input.viewport_scroll_ratio) || 0.65))
   };
 }
 
@@ -278,7 +284,7 @@ function makePayload(state) {
   const demandPosts = uniquePosts.filter((post) => post.demand?.is_demand);
   const contactLeads = demandPosts.filter((post) => (post.contacts?.phones?.length || 0) + (post.contacts?.emails?.length || 0) > 0);
   return {
-    schema_version: '0.7.0',
+    schema_version: '0.7.1',
     scope: state.mode === 'url_auto'
       ? 'url_provided_accessible_facebook_group_demand_leads'
       : 'keyword_discovered_accessible_facebook_group_demand_leads',
@@ -327,7 +333,7 @@ async function startAutomatedSession(tabId, options = {}) {
   if (!keywords.length) throw new Error('Hãy nhập ít nhất một keyword tìm group.');
   const config = normalizeConfig(options.config);
   const state = {
-    schema_version: '0.7.0', mode: 'keyword_auto', phase: 'discovering', running: true,
+    schema_version: '0.7.1', mode: 'keyword_auto', phase: 'discovering', running: true,
     paused: false, stopped: false, tab_id: tabId,
     started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     keywords, current_keyword_index: 0, discovered_groups: [], target_groups: [], current_index: 0,
@@ -348,7 +354,7 @@ async function startUrlSession(tabId, options = {}) {
   // URL mode is exhaustive: every normalized URL in the supplied queue must be attempted.
   config.session_group_target = targetGroups.length;
   const state = {
-    schema_version: '0.7.0', mode: 'url_auto', phase: 'collecting', running: true,
+    schema_version: '0.7.1', mode: 'url_auto', phase: 'collecting', running: true,
     paused: false, stopped: false, tab_id: tabId,
     started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     keywords: [], current_keyword_index: 0, discovered_groups: [],
@@ -428,6 +434,8 @@ async function checkpointProgress(message) {
   const previous = state.partial_results[message.progress.group_key];
   const previousPostCount = previous?.posts?.length || 0;
   const previousRecoveryCount = previous?.recovery_count || 0;
+  const previousPartialCount = previous?.partial_candidate_count || 0;
+  const previousFailureCount = previous?.invalid_observation_count || 0;
   state.partial_results[message.progress.group_key] = message.progress;
   state.updated_at = new Date().toISOString();
   const merged = { ...(state.attempt_results || {}), ...(state.partial_results || {}) };
@@ -435,7 +443,12 @@ async function checkpointProgress(message) {
   const interval = state.config.checkpoint_export_every_posts || 0;
   const currentPostCount = message.progress.posts?.length || 0;
   const currentRecoveryCount = message.progress.recovery_count || 0;
-  if (currentPostCount !== previousPostCount || currentRecoveryCount !== previousRecoveryCount) {
+  const currentPartialCount = message.progress.partial_candidate_count || 0;
+  const currentFailureCount = message.progress.invalid_observation_count || 0;
+  if (currentPostCount !== previousPostCount
+    || currentRecoveryCount !== previousRecoveryCount
+    || currentPartialCount !== previousPartialCount
+    || currentFailureCount !== previousFailureCount) {
     addDebugLog(state, currentRecoveryCount > previousRecoveryCount ? 'group_recovery' : 'scan_progress', {
       group_key: message.progress.group_key,
       group_index: state.current_index + 1,
@@ -444,6 +457,8 @@ async function checkpointProgress(message) {
       total_posts: totalPosts,
       completed_groups: Object.keys(state.group_results || {}).length,
       recovery_count: currentRecoveryCount,
+      partial_candidates: currentPartialCount,
+      stable_extraction_failures: currentFailureCount,
       round: message.progress.round || 0
     }, currentRecoveryCount > previousRecoveryCount ? 'warning' : 'info');
   }
@@ -596,7 +611,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const state = result.fbCollectorState || null;
       if (state) {
         state.config = normalizeConfig(state.config || {});
-        state.schema_version = '0.7.0';
+        state.schema_version = '0.7.1';
         state.debug_log = Array.isArray(state.debug_log) ? state.debug_log.slice(-MAX_DEBUG_LOG_ENTRIES) : [];
         state.extraction_failures = Array.isArray(state.extraction_failures) ? state.extraction_failures.slice(-100) : [];
         state.debug_log_sequence = Number.isFinite(state.debug_log_sequence)

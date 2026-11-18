@@ -1,4 +1,4 @@
-# Facebook URL Demand Collector v0.7.0
+# Facebook URL Demand Collector v0.7.1
 
 Chrome Manifest V3 extension for a user-started, read-only research session on Facebook content the signed-in user can already access.
 
@@ -24,6 +24,8 @@ Version 0.6.2 makes URL mode exhaustive. The completed-group target can no longe
 Version 0.6.3 adds an opt-in local developer bridge. While developer mode is enabled, every debug event is forwarded immediately to `http://127.0.0.1:32145` and appended to `debug_logs/extension-live.jsonl` inside the project. The bridge listens only on localhost and does not receive post text or contact values.
 
 Version 0.7.0 replaces permissive text fallback with a validation-gated extraction pipeline. Only a verified top-level message with a canonical Facebook post identity and trustworthy provenance is `VALID`. Comments and nested shared-post bodies remain separate and can never substitute for a missing original body. Only `VALID` records count toward collection targets or enter demand classification.
+
+Version 0.7.1 handles Facebook's partially rendered viewport. It observes each viewport twice with a settle delay, expands **See more** before the second observation, scrolls with 35% overlap, and retains `PARTIAL` observations across rounds. Complementary observations are merged only when they share a canonical post ID, a stable author/time correlation key, or the same verified original-body fingerprint. A failure is reported only after at least two matching observations, and only `VALID` merged records increase the target counter.
 
 The default is 100 posts per group, with up to 50 unique supplied URLs per session. A temporary feed saturation no longer ends a group: the collector keeps recovering and retrying until the target is reached or the user presses **Dừng & xuất**. A group that remains inaccessible behind a join/request screen is recorded as incomplete and skipped so the URL queue can continue.
 
@@ -71,7 +73,7 @@ The local server binds to `127.0.0.1:32145` only. If it is not running, collecti
 - Chrome may require the directory to be selected again after a browser restart or permission reset.
 - If direct writing is unavailable, the extension automatically falls back to `Downloads/FacebookDemandCollector`.
 
-## Output schema 0.7.0
+## Output schema 0.7.1
 
 The downloaded JSON contains:
 
@@ -95,6 +97,9 @@ The downloaded JSON contains:
 - Canonical identity accepts direct group post/permalink URLs, `story_fbid`, or a group media `set=pcb|gm` identity.
 - `VALID` requires original body, canonical ID, canonical URL, and verified top-level provenance.
 - `PARTIAL` and `INVALID` observations are logged for diagnostics but do not increase the target counter.
+- `PARTIAL` observations are retained in sanitized checkpoints and retried/merged on later overlapping viewport passes.
 - Demand classification and contact extraction run only after a record becomes `VALID`.
+
+The default stabilization settings are two observations per viewport, a 700 ms settle delay and a 0.65-viewport scroll step. They are normalized as `observation_passes_per_viewport`, `viewport_settle_ms` and `viewport_scroll_ratio` in the session configuration.
 
 Run the regression suite with `node --test tests/extractor-core.test.js`. Manual-review evidence and before/after metrics are documented in `reports/extraction-validation-v0.7.0.md`.

@@ -47,6 +47,15 @@ test('top-level body selector never substitutes comments or shared-post text', (
   assert.equal(missing.is_original, false);
 });
 
+test('partial observations merge only through strong stable evidence', () => {
+  const bodyOnly = { correlation_key: 'corr-1', body: { text: 'Original body', is_original: true }, content_fingerprint: 'body-1' };
+  const identityOnly = { correlation_key: 'corr-1', post_id: '123', post_url: 'https://www.facebook.com/groups/g/posts/123/' };
+  const unrelated = { correlation_key: 'corr-2', post_id: '999' };
+  assert.equal(Core.canMergePostObservations(bodyOnly, identityOnly), true);
+  assert.equal(Core.canMergePostObservations(bodyOnly, unrelated), false);
+  assert.ok(Core.observationQuality(identityOnly) > 0);
+});
+
 test('canonical permalink extraction covers direct, story and media-set links', () => {
   assert.deepEqual(Core.canonicalPostIdentity('https://www.facebook.com/groups/123/posts/456/?comment_id=9'), {
     post_id: '456', group_key: '123', post_url: 'https://www.facebook.com/groups/123/posts/456/', source: 'direct-post-link', confidence: 1
