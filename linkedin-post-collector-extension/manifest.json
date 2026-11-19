@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LinkedIn URL Demand Collector",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "URL-driven LinkedIn post collection with validation, partial-record recovery, demand detection and JSON export.",
   "permissions": ["activeTab", "downloads", "storage", "tabs", "unlimitedStorage"],
   "host_permissions": ["https://www.linkedin.com/*", "http://127.0.0.1:32145/*"],

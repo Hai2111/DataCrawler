@@ -1,4 +1,4 @@
-# LinkedIn URL Demand Collector v0.1.0
+# LinkedIn URL Demand Collector v0.1.1
 
 Chrome Manifest V3 extension for user-started, read-only collection of LinkedIn posts already visible to the signed-in account.
 
@@ -38,5 +38,7 @@ Paste one URL per line. The collector processes up to 50 normalized URLs sequent
 ## Boundaries
 
 The extension does not connect, follow, message, react, comment, apply for jobs, bypass login/challenges, or call private LinkedIn APIs. Use collected data for a legitimate purpose and comply with applicable privacy law, LinkedIn terms and source-page expectations.
+
+Version 0.1.1 adds compatibility with the newer LinkedIn feed UI observed on November 19, 2026: `Feed post` list-item containers, `data-view-name` commentary/actor nodes, descendant Activity URNs, relative actor timestamps and reaction counts exposed through links.
 
 Run `node --test tests/linkedin-extractor-core.test.js` for the core regression suite.

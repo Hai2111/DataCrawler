@@ -4,6 +4,15 @@
   let collecting = false;
   const reportedFailures = new Set();
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const POST_CONTAINER_SELECTOR = [
+    'div.feed-shared-update-v2[data-urn]',
+    'div.feed-shared-update-v2[data-id]',
+    '[data-view-name="feed-full-update"]',
+    '[data-urn*="urn:li:activity:"]',
+    '[data-id^="urn:li:activity:"]',
+    'article[data-urn]',
+    'main [role="listitem"]'
+  ].join(', ');
 
   function hashText(value) {
     let hash = 2166136261;
@@ -25,14 +34,19 @@
   }
 
   function containers() {
-    const selector = 'div.feed-shared-update-v2[data-urn], div.feed-shared-update-v2[data-id], div[data-id^="urn:li:activity:"], article[data-urn]';
-    const all = [...document.querySelectorAll(selector)].filter((node) => node.offsetParent !== null);
-    return all.filter((node) => !all.some((other) => other !== node && other.contains(node)));
+    const all = [...document.querySelectorAll(POST_CONTAINER_SELECTOR)]
+      .filter((node) => node.offsetParent !== null)
+      .filter((node) => {
+        const controls = Core.cleanText([...node.querySelectorAll('button, a')]
+          .map((item) => item.getAttribute('aria-label') || item.textContent).join(' '));
+        return /(?:comment|bình luận)/i.test(controls) && /(?:repost|đăng lại|chia sẻ)/i.test(controls);
+      });
+    return all.filter((node) => !all.some((other) => other !== node && node.contains(other)));
   }
 
   function ownedNodes(container, selector) {
     return [...container.querySelectorAll(selector)].filter((node) => {
-      const owner = node.closest('div.feed-shared-update-v2[data-urn], div.feed-shared-update-v2[data-id], div[data-id^="urn:li:activity:"], article[data-urn]');
+      const owner = node.closest(POST_CONTAINER_SELECTOR);
       return !owner || owner === container;
     });
   }
@@ -41,13 +55,20 @@
     const selectors = [
       '.update-components-text',
       '.feed-shared-update-v2__description',
+      '[data-view-name="feed-commentary"]',
+      '[data-testid="expandable-text-box"]',
+      '.update-components-update-v2__commentary',
       '[data-test-id="main-feed-activity-card"] .break-words',
-      '.feed-shared-text'
+      '.feed-shared-text',
+      '.break-words',
+      '[dir="auto"]'
     ];
     for (const selector of selectors) {
       const candidates = ownedNodes(container, selector)
         .map((node) => ({ node, text: Core.cleanText(node.innerText || node.textContent) }))
-        .filter((item) => item.text && !item.node.closest('.comments-comment-item, .feed-shared-inline-show-more-text--is-comment'));
+        .filter((item) => item.text.length >= 10
+          && !item.node.closest('.comments-comment-item, .feed-shared-inline-show-more-text--is-comment, [data-view-name="comment"], .feed-shared-mini-update-v2, [data-view-name="feed-repost"]')
+          && !item.node.closest('.update-components-actor, .feed-shared-actor, [data-view-name="feed-actor"]'));
       const best = candidates.sort((a, b) => b.text.length - a.text.length)[0];
       if (best) return { text: best.text, source: selector, is_original: true };
     }
@@ -58,6 +79,8 @@
     const values = [
       `data-urn:${container.getAttribute('data-urn') || ''}`,
       container.getAttribute('data-id') || '',
+      ...[...container.querySelectorAll('[data-urn*="urn:li:activity:"], [data-id^="urn:li:activity:"]')]
+        .flatMap((node) => [node.getAttribute('data-urn'), node.getAttribute('data-id')]).filter(Boolean),
       ...ownedNodes(container, 'a[href*="/feed/update/"], a[href*="activity-"], a[href*="activityId="]').map((anchor) => anchor.href)
     ];
     return Core.canonicalIdentity(values);
@@ -67,6 +90,7 @@
     const anchor = ownedNodes(container, [
       '.update-components-actor__meta-link',
       '.feed-shared-actor__container-link',
+      '[data-view-name="feed-actor"] a',
       'a[href*="/in/"]',
       'a[href*="/company/"]'
     ].join(',')).find((node) => Core.cleanText(node.textContent));
@@ -82,11 +106,15 @@
   }
 
   function timestampInfo(container) {
-    const time = ownedNodes(container, 'time')[0];
+    const time = ownedNodes(container, 'time[datetime], time')[0];
     if (time) return Core.parseTimestamp(time.textContent, time.getAttribute('datetime'));
-    const candidate = ownedNodes(container, '.update-components-actor__sub-description, .feed-shared-actor__sub-description')
-      .map((node) => Core.cleanText(node.textContent)).find(Boolean);
-    return Core.parseTimestamp(candidate, null);
+    const actorTexts = ownedNodes(container, '.update-components-actor__sub-description, .feed-shared-actor__sub-description, [data-view-name="feed-actor"]')
+      .map((node) => Core.cleanText(node.textContent)).filter(Boolean);
+    for (const actorText of actorTexts) {
+      const relative = actorText.match(/(?:^|\s)(\d+\s*(?:s|m|h|d|w|mo|y|giây|phút|giờ|ngày|tuần|tháng|năm))(?:\s|·|$)/i)?.[1];
+      if (relative) return Core.parseTimestamp(relative, null);
+    }
+    return Core.parseTimestamp(actorTexts[0], null);
   }
 
   function extractContacts(text, allowed) {
@@ -110,7 +138,8 @@
   }
 
   function engagement(container) {
-    const labels = ownedNodes(container, 'button[aria-label], span[aria-label]').map((node) => node.getAttribute('aria-label')).filter(Boolean);
+    const labels = ownedNodes(container, 'button[aria-label], span[aria-label], a[aria-label], a')
+      .flatMap((node) => [node.getAttribute('aria-label'), node.textContent]).map(Core.cleanText).filter(Boolean);
     const find = (pattern) => {
       const label = labels.find((value) => pattern.test(value));
       return label ? Core.parseCompactNumber(label) : null;
@@ -169,7 +198,7 @@
       demand: { status: 'not_classified_extraction_invalid', is_demand: false, score: null, category: null, signals: [] },
       contacts: { phones: [], emails: [] },
       provenance: {
-        verified_top_level_container: container.matches('div.feed-shared-update-v2[data-urn], div.feed-shared-update-v2[data-id], div[data-id^="urn:li:activity:"], article[data-urn]'),
+        verified_top_level_container: container.matches(POST_CONTAINER_SELECTOR),
         container_selector: container.classList.contains('feed-shared-update-v2') ? 'feed-shared-update-v2' : container.tagName.toLowerCase(),
         identity_source: identity.source,
         identity_confidence: identity.confidence
