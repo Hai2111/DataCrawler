@@ -1,6 +1,18 @@
 const DEFAULT_KEYWORDS = [
-  'thiết kế PCB', 'gia công PCB', 'ESP32 Việt Nam',
-  'Arduino Việt Nam', 'tự động hóa công nghiệp'
+  'thiết kế mạch điện tử',
+  'thiết kế PCB',
+  'gia công PCB PCBA',
+  'thiết kế bo mạch theo yêu cầu',
+  'làm mạch theo yêu cầu',
+  'lập trình vi điều khiển',
+  'firmware embedded Việt Nam',
+  'ESP32 Việt Nam',
+  'Arduino Việt Nam',
+  'STM32 Việt Nam',
+  'IoT Việt Nam',
+  'R&D sản phẩm điện tử',
+  'prototype điện tử',
+  'tự động hóa PLC Việt Nam'
 ];
 
 const DEFAULT_TARGET_GROUPS = [
@@ -116,7 +128,10 @@ async function forwardDebugLog(state, entry) {
       })
     });
   } catch (error) {
-    console.warn('[Facebook Demand Collector] Dev log bridge unavailable.', error.message);
+    // The local bridge is optional. Chrome surfaces console.warn from extension
+    // service workers as an extension "Error", which makes an expected offline
+    // bridge look like a collector failure.
+    console.debug('[Facebook Demand Collector] Dev log bridge unavailable.', error.message);
   }
 }
 
@@ -131,7 +146,10 @@ function addDebugLog(state, event, details = {}, level = 'info') {
   };
   state.debug_log_sequence = entry.sequence;
   state.debug_log = [...(state.debug_log || []), entry].slice(-MAX_DEBUG_LOG_ENTRIES);
-  console[level === 'error' ? 'error' : level === 'warning' ? 'warn' : 'info']('[Facebook Demand Collector]', entry);
+  // Keep the severity in the structured entry, but reserve console.error for
+  // actual runtime failures. Expected validation rejections use "warning" and
+  // must not pollute chrome://extensions with false error badges.
+  console[level === 'error' ? 'error' : 'info']('[Facebook Demand Collector]', entry);
   void forwardDebugLog(state, entry);
   return entry;
 }
@@ -205,7 +223,7 @@ async function savePayload(payload, filenamePrefix = 'facebook-demand-leads', pr
       const direct = await writePayloadToSelectedDirectory(payload, filenamePrefix);
       if (direct.ok) return direct;
     } catch (error) {
-      console.warn('Selected-directory write failed; falling back to Downloads.', error);
+      console.info('Selected-directory write failed; falling back to Downloads.', error);
     }
   }
   return new Promise((resolve) => {
@@ -284,7 +302,7 @@ function makePayload(state) {
   const demandPosts = uniquePosts.filter((post) => post.demand?.is_demand);
   const contactLeads = demandPosts.filter((post) => (post.contacts?.phones?.length || 0) + (post.contacts?.emails?.length || 0) > 0);
   return {
-    schema_version: '0.7.1',
+    schema_version: '0.7.3',
     scope: state.mode === 'url_auto'
       ? 'url_provided_accessible_facebook_group_demand_leads'
       : 'keyword_discovered_accessible_facebook_group_demand_leads',
@@ -333,7 +351,7 @@ async function startAutomatedSession(tabId, options = {}) {
   if (!keywords.length) throw new Error('Hãy nhập ít nhất một keyword tìm group.');
   const config = normalizeConfig(options.config);
   const state = {
-    schema_version: '0.7.1', mode: 'keyword_auto', phase: 'discovering', running: true,
+    schema_version: '0.7.3', mode: 'keyword_auto', phase: 'discovering', running: true,
     paused: false, stopped: false, tab_id: tabId,
     started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     keywords, current_keyword_index: 0, discovered_groups: [], target_groups: [], current_index: 0,
@@ -354,7 +372,7 @@ async function startUrlSession(tabId, options = {}) {
   // URL mode is exhaustive: every normalized URL in the supplied queue must be attempted.
   config.session_group_target = targetGroups.length;
   const state = {
-    schema_version: '0.7.1', mode: 'url_auto', phase: 'collecting', running: true,
+    schema_version: '0.7.3', mode: 'url_auto', phase: 'collecting', running: true,
     paused: false, stopped: false, tab_id: tabId,
     started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     keywords: [], current_keyword_index: 0, discovered_groups: [],
@@ -597,9 +615,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'startUrlSession') {
     (async () => {
-      if (message.options) return startUrlSession(tabId, message.options);
       const { fbCollectorSettings } = await chrome.storage.local.get('fbCollectorSettings');
-      return startUrlSession(tabId, fbCollectorSettings || { target_groups: DEFAULT_TARGET_GROUPS, config: DEFAULT_CONFIG });
+      const options = message.options || fbCollectorSettings || { target_groups: DEFAULT_TARGET_GROUPS, config: DEFAULT_CONFIG };
+      const targetGroups = normalizeTargets(options.target_groups);
+      if (!targetGroups.length) throw new Error('Hãy nhập ít nhất một URL Facebook Group hợp lệ.');
+      const { fbCollectorState: current } = await chrome.storage.local.get('fbCollectorState');
+      if (current?.running) throw new Error('Đang có phiên quét. Hãy dừng phiên đó trước.');
+      let collectorTab = null;
+      try {
+        collectorTab = await chrome.tabs.create({ url: targetGroups[0], active: false });
+        return await startUrlSession(collectorTab.id, { ...options, target_groups: targetGroups });
+      } catch (error) {
+        if (collectorTab?.id) await chrome.tabs.remove(collectorTab.id).catch(() => {});
+        throw error;
+      }
     })()
       .then((state) => sendResponse({ ok: true, state }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
@@ -611,7 +640,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const state = result.fbCollectorState || null;
       if (state) {
         state.config = normalizeConfig(state.config || {});
-        state.schema_version = '0.7.1';
+        state.schema_version = '0.7.3';
         state.debug_log = Array.isArray(state.debug_log) ? state.debug_log.slice(-MAX_DEBUG_LOG_ENTRIES) : [];
         state.extraction_failures = Array.isArray(state.extraction_failures) ? state.extraction_failures.slice(-100) : [];
         state.debug_log_sequence = Number.isFinite(state.debug_log_sequence)
@@ -721,3 +750,40 @@ chrome.commands.onCommand.addListener(async (command) => {
   const { fbCollectorSettings } = await chrome.storage.local.get('fbCollectorSettings');
   await startUrlSession(tab.id, fbCollectorSettings || { target_groups: DEFAULT_TARGET_GROUPS, config: DEFAULT_CONFIG });
 });
+
+async function stopOrphanedSession(reason = 'collector_tab_closed') {
+  const { fbCollectorState: state } = await chrome.storage.local.get('fbCollectorState');
+  if (!state?.running) return false;
+  let collectorTabExists = false;
+  try {
+    const tab = await chrome.tabs.get(state.tab_id);
+    collectorTabExists = Boolean(tab?.id);
+  } catch {
+    collectorTabExists = false;
+  }
+  if (collectorTabExists) return false;
+  state.running = false;
+  state.paused = false;
+  state.stopped = true;
+  state.phase = 'stopped';
+  state.stopped_at = new Date().toISOString();
+  addDebugLog(state, 'session_stopped_orphaned_tab', {
+    reason,
+    completed_groups: state.completed_groups || 0,
+    retained_posts: Object.values({ ...(state.attempt_results || {}), ...(state.partial_results || {}) })
+      .reduce((sum, group) => sum + validPostCount(group), 0)
+  }, 'warning');
+  await chrome.storage.local.set({ fbCollectorState: state });
+  return true;
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.storage.local.get('fbCollectorState').then(({ fbCollectorState: state }) => {
+    if (state?.running && state.tab_id === tabId) return stopOrphanedSession('collector_tab_closed');
+    return false;
+  }).catch((error) => console.warn('[Facebook Demand Collector] Failed to stop closed-tab session.', error));
+});
+
+// A service-worker reload can happen after the collector tab was closed. Audit
+// once on startup so a saved RUNNING state cannot silently resume later.
+void stopOrphanedSession('service_worker_started_without_collector_tab');

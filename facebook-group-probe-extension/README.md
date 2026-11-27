@@ -1,4 +1,4 @@
-# Facebook URL Demand Collector v0.7.1
+# Facebook URL Demand Collector v0.7.3
 
 Chrome Manifest V3 extension for a user-started, read-only research session on Facebook content the signed-in user can already access.
 
@@ -27,6 +27,10 @@ Version 0.7.0 replaces permissive text fallback with a validation-gated extracti
 
 Version 0.7.1 handles Facebook's partially rendered viewport. It observes each viewport twice with a settle delay, expands **See more** before the second observation, scrolls with 35% overlap, and retains `PARTIAL` observations across rounds. Complementary observations are merged only when they share a canonical post ID, a stable author/time correlation key, or the same verified original-body fingerprint. A failure is reported only after at least two matching observations, and only `VALID` merged records increase the target counter.
 
+Version 0.7.3 adds a conservative fallback for Facebook's current group-feed DOM, where top-level posts may not expose `role="article"` or `data-ad-preview="message"`. Nested comment articles remain excluded from post bodies; a comment permalink may provide only the canonical parent post ID. Keyword discovery uses Vietnamese seed phrases from the reviewed corpus: PCB/PCBA, embedded firmware and microcontrollers, ESP32/Arduino/STM32, IoT, electronics prototyping, product R&D and PLC automation.
+
+The simplified popup shows only a folder picker, group URL list, start/stop controls and live progress. Starting a URL session creates a dedicated inactive Chrome tab, so the popup can close and other tabs can be used while that tab continues collecting. Keep the collector tab open; closing it stops the session. Existing advanced settings remain stored internally.
+
 The default is 100 posts per group, with up to 50 unique supplied URLs per session. A temporary feed saturation no longer ends a group: the collector keeps recovering and retrying until the target is reached or the user presses **Dừng & xuất**. A group that remains inaccessible behind a join/request screen is recorded as incomplete and skipped so the URL queue can continue.
 
 ## Data minimization
@@ -52,16 +56,14 @@ The recommended `contacts_only` mode:
 1. Open `chrome://extensions`.
 2. Enable **Developer mode**.
 3. Click **Reload** on the existing extension, or use **Load unpacked** and select this folder.
-4. Open Facebook while signed in.
-5. Open the extension, paste the group URLs, review settings, then click **Quét danh sách URL**.
+4. Sign in to Facebook in Chrome.
+5. Open the extension, choose a folder, paste the group URLs and click **Bắt đầu quét**. The collector opens its own background tab.
 
 ## Realtime developer log
 
 1. Run `RUN_DEV_LOG_SERVER.bat` from the project root, or run `node tools/dev-log-server.js`.
 2. Reload the unpacked extension after upgrading.
-3. Keep **Developer mode: gửi log realtime về project** enabled in the popup.
-4. Confirm that the popup reports `Dev log bridge: đã kết nối`.
-5. Inspect `debug_logs/extension-live.jsonl` for the append-only event stream and `debug_logs/extension-live-latest.json` for the latest event.
+3. If developer mode was enabled in the saved settings, inspect `debug_logs/extension-live.jsonl` for the append-only event stream and `debug_logs/extension-live-latest.json` for the latest event.
 
 The local server binds to `127.0.0.1:32145` only. If it is not running, collection continues normally and the service worker prints a bridge warning to its console.
 
@@ -73,7 +75,7 @@ The local server binds to `127.0.0.1:32145` only. If it is not running, collecti
 - Chrome may require the directory to be selected again after a browser restart or permission reset.
 - If direct writing is unavailable, the extension automatically falls back to `Downloads/FacebookDemandCollector`.
 
-## Output schema 0.7.1
+## Output schema 0.7.3
 
 The downloaded JSON contains:
 
@@ -103,3 +105,7 @@ The downloaded JSON contains:
 The default stabilization settings are two observations per viewport, a 700 ms settle delay and a 0.65-viewport scroll step. They are normalized as `observation_passes_per_viewport`, `viewport_settle_ms` and `viewport_scroll_ratio` in the session configuration.
 
 Run the regression suite with `node --test tests/extractor-core.test.js`. Manual-review evidence and before/after metrics are documented in `reports/extraction-validation-v0.7.0.md`.
+
+## Project-local review loop
+
+Select `D:\codex\DataCollector\collected_data\facebook-loop\raw` as the export directory. Runtime JSON remains ignored by Git. Run `node analysis/review_facebook_loop.js` to write an aggregate, contact-free review receipt to `collected_data/facebook-loop/review/facebook-loop-review-latest.json`. The review uses only schema 0.7+ `VALID` posts when available; legacy files are labeled provisional and cannot drive demand classification.

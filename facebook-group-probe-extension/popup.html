@@ -9,11 +9,36 @@
   <body>
     <main>
       <header>
-        <h1>Facebook Demand Collector <small>v0.7.1</small></h1>
+        <h1>Quét nhóm Facebook</h1>
         <span id="run-state" class="pill">Sẵn sàng</span>
       </header>
+      <label>Thư mục lưu kết quả</label>
+      <button id="select-directory" type="button">Chọn thư mục</button>
+      <p id="directory-name" class="hint">Chưa chọn — sẽ lưu vào Downloads/FacebookDemandCollector</p>
       <label for="groups">URL Facebook Group — mỗi dòng một URL</label>
-      <textarea id="groups" rows="7" spellcheck="false" placeholder="https://www.facebook.com/groups/..."></textarea>
+      <textarea id="groups" rows="6" spellcheck="false" placeholder="https://www.facebook.com/groups/..."></textarea>
+      <p id="url-count" class="hint">0 URL</p>
+      <div class="actions">
+        <button id="start" class="primary">Bắt đầu quét</button>
+        <button id="stop" class="danger">Dừng & lưu</button>
+      </div>
+      <section class="progress-panel" aria-live="polite">
+        <strong id="progress-summary">Chưa có phiên quét.</strong>
+        <progress id="progress-bar" max="100" value="0"></progress>
+        <p id="progress-detail" class="hint">Có thể chuyển tab hoặc đóng popup khi quét. Giữ tab quét mở.</p>
+      </section>
+      <output id="status" aria-live="polite"></output>
+      <div hidden>
+      <details class="keyword-panel">
+        <summary>Tìm thêm group theo từ khóa dữ liệu</summary>
+        <label for="keywords">Từ khóa — mỗi dòng một cụm</label>
+        <textarea id="keywords" rows="8" spellcheck="false"></textarea>
+        <label>Số group cần tìm và quét
+          <input id="keyword-group-target" type="number" min="1" max="50" value="10" />
+        </label>
+        <button id="start-keywords" class="primary" type="button">Tìm group & quét tự động</button>
+        <p class="hint">Mặc định lấy từ dữ liệu đã thu: PCB/PCBA, firmware, ESP32/Arduino/STM32, IoT, prototype và PLC.</p>
+      </details>
       <div class="grid">
         <label>Số URL sẽ quét
           <input id="group-target" type="number" min="0" max="50" value="0" readonly />
@@ -32,12 +57,9 @@
         <option value="redacted">Không lưu contact</option>
         <option value="full">Raw đầy đủ tên và số liên hệ</option>
       </select>
-      <label>Thư mục lưu kết quả</label>
       <div class="directory-actions">
-        <button id="select-directory" type="button">Chọn thư mục</button>
         <button id="clear-directory" type="button">Bỏ chọn</button>
       </div>
-      <p id="directory-name" class="hint">Chưa chọn — sẽ lưu vào Downloads/FacebookDemandCollector</p>
       <label class="check"><input id="save-selected-directory" type="checkbox" checked /> Ưu tiên thư mục đã chọn</label>
       <p class="hint">Chỉ đọc nội dung đang truy cập được. Không tự gia nhập nhóm, không thu cookie/token và không nhắn tin tự động.</p>
       <label class="check"><input id="collect-contacts" type="checkbox" checked /> Trích số điện thoại/email công khai</label>
@@ -47,16 +69,13 @@
       <label class="check"><input id="developer-mode" type="checkbox" checked /> Developer mode: gửi log realtime về project</label>
       <p id="dev-log-status" class="hint">Đang kiểm tra dev log bridge…</p>
       <div class="actions">
-        <button id="start" class="primary">Quét danh sách URL</button>
         <button id="pause">Tạm dừng</button>
         <button id="resume">Tiếp tục</button>
-        <button id="stop" class="danger">Dừng & xuất</button>
       </div>
       <div class="actions secondary">
         <button id="export-now">Xuất checkpoint ngay — không dừng</button>
         <button id="download-last">Tải kết quả gần nhất</button>
       </div>
-      <output id="status" aria-live="polite"></output>
       <details class="debug-panel" open>
         <summary>Nhật ký debug <span id="log-count">0</span></summary>
         <div class="debug-actions">
@@ -65,6 +84,7 @@
         </div>
         <pre id="debug-log" aria-live="polite">Chưa có log.</pre>
       </details>
+      </div>
     </main>
     <script src="popup.js"></script>
   </body>

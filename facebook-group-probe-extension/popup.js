@@ -1,5 +1,7 @@
 const elements = {
   groups: document.querySelector('#groups'),
+  keywords: document.querySelector('#keywords'),
+  keywordGroupTarget: document.querySelector('#keyword-group-target'),
   groupTarget: document.querySelector('#group-target'),
   minimumPosts: document.querySelector('#minimum-posts'),
   checkpointExportEvery: document.querySelector('#checkpoint-export-every'),
@@ -22,8 +24,13 @@ function inputUrls() {
   return [...new Set(elements.groups.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean))];
 }
 
+function inputKeywords() {
+  return [...new Set(elements.keywords.value.split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean))];
+}
+
 function syncUrlCount() {
   elements.groupTarget.value = inputUrls().length;
+  document.querySelector('#url-count').textContent = `${inputUrls().length} URL`;
 }
 
 function setStatus(message, kind = '') {
@@ -70,6 +77,21 @@ function optionsFromForm() {
       collect_visible_comments: elements.collectComments.checked,
       collect_raw_snapshot: elements.rawSnapshot.checked,
       developer_mode: elements.developerMode.checked
+    }
+  };
+}
+
+function keywordOptionsFromForm() {
+  const keywords = inputKeywords();
+  const groupTarget = Math.max(1, Math.min(50, Number(elements.keywordGroupTarget.value) || 10));
+  const options = optionsFromForm();
+  return {
+    keywords,
+    config: {
+      ...options.config,
+      session_group_target: groupTarget,
+      discovery_candidate_limit: Math.max(groupTarget, Math.min(50, groupTarget * 2)),
+      discovery_results_per_keyword: 16
     }
   };
 }
@@ -146,8 +168,31 @@ async function renderDevLogBridgeStatus() {
 
 function renderState(state) {
   renderDebugLog(state?.debug_log || []);
+  const running = Boolean(state?.running);
+  document.querySelector('#start').disabled = running;
+  document.querySelector('#stop').disabled = !running;
+  elements.groups.disabled = running;
+  const queueTotal = state?.target_groups?.length || 0;
+  const target = state?.config?.minimum_unique_posts_per_group || 100;
+  const mergedResults = { ...(state?.attempt_results || {}), ...(state?.partial_results || {}) };
+  const validCount = (group) => (group?.posts || []).filter((post) =>
+    post.validation?.is_valid === true && post.validation?.status === 'VALID').length;
+  const totalValid = Object.values(mergedResults).reduce((sum, group) => sum + validCount(group), 0);
+  const processed = Object.keys(state?.attempt_results || {}).length;
+  const currentUrl = running ? state.target_groups?.[state.current_index] : null;
+  const currentKey = currentUrl ? new URL(currentUrl).pathname.split('/')[2] : null;
+  const currentValid = currentKey ? validCount(state.partial_results?.[currentKey]) : 0;
+  document.querySelector('#progress-summary').textContent = state
+    ? `Nhóm ${running ? Math.min(state.current_index + 1, queueTotal) : processed}/${queueTotal} · ${totalValid} bài VALID`
+    : 'Chưa có phiên quét.';
+  document.querySelector('#progress-bar').value = queueTotal
+    ? Math.min(100, Math.round(100 * (processed + (running ? Math.min(1, currentValid / target) : 0)) / queueTotal)) : 0;
+  document.querySelector('#progress-detail').textContent = running
+    ? `Nhóm hiện tại: ${currentValid}/${target} bài · Đã xử lý ${processed}/${queueTotal} URL. Có thể chuyển tab; giữ tab quét mở.`
+    : state?.stopped ? 'Đã dừng phiên quét.' : state?.phase === 'finished'
+      ? 'Đã xử lý xong danh sách URL.' : 'Có thể chuyển tab hoặc đóng popup khi quét. Giữ tab quét mở.';
   if (!state?.running) {
-    elements.state.textContent = state?.phase === 'finished' ? 'Đã hoàn tất' : 'Sẵn sàng';
+    elements.state.textContent = state?.stopped ? 'Đã dừng' : state?.phase === 'finished' ? 'Đã hoàn tất' : 'Sẵn sàng';
     elements.state.dataset.state = 'idle';
     return;
   }
@@ -155,27 +200,24 @@ function renderState(state) {
     elements.state.textContent = 'Tạm dừng';
     elements.state.dataset.state = 'paused';
   } else {
+    if (state.phase === 'discovering') {
+      const keywordNumber = Math.min((state.current_keyword_index || 0) + 1, state.keywords?.length || 0);
+      elements.state.textContent = `Đang tìm group ${keywordNumber}/${state.keywords?.length || 0}`;
+      elements.state.dataset.state = 'running';
+      return;
+    }
     const queueTotal = state.mode === 'url_auto' ? state.target_groups?.length || 0 : state.config.session_group_target;
     elements.state.textContent = `Đang quét URL ${Math.min(state.current_index + 1, queueTotal)}/${queueTotal}`;
     elements.state.dataset.state = 'running';
   }
-  const url = state.target_groups?.[state.current_index];
-  const key = url ? new URL(url).pathname.split('/')[2] : null;
-  const partial = key ? state.partial_results?.[key] : null;
-  const merged = { ...(state.attempt_results || {}), ...(state.partial_results || {}) };
-  const validCount = (group) => (group?.posts || [])
-    .filter((post) => post.validation?.is_valid === true && post.validation?.status === 'VALID').length;
-  const totalPosts = Object.values(merged).reduce((sum, group) => sum + validCount(group), 0);
-  const queueTotal = state.mode === 'url_auto' ? state.target_groups?.length || 0 : state.config.session_group_target;
-  const processedUrls = Object.keys(state.attempt_results || {}).length;
-  const totalTarget = state.config.minimum_unique_posts_per_group * queueTotal;
-  setStatus(`Group đang quét: ${url || 'đang hoàn tất'}\nBài VALID group hiện tại: ${validCount(partial)}/${state.config.minimum_unique_posts_per_group}\nTổng VALID đã lưu: ${totalPosts}/${totalTarget} bài\nQuan sát PARTIAL/INVALID: ${partial?.invalid_observation_count || partial?.extraction_failures?.length || 0}\nURL đã xử lý: ${processedUrls}/${queueTotal}\nGroup đủ mục tiêu: ${Object.keys(state.group_results || {}).length}/${queueTotal}\nSố lần phục hồi group hiện tại: ${partial?.recovery_count || 0}`);
 }
 
 async function loadState() {
   const response = await chrome.runtime.sendMessage({ action: 'getBatchState' });
   const settings = response.settings;
   elements.groups.value = (settings.target_groups || []).join('\n');
+  elements.keywords.value = (settings.keywords || []).join('\n');
+  elements.keywordGroupTarget.value = settings.config?.session_group_target || 10;
   syncUrlCount();
   elements.minimumPosts.value = settings.config?.minimum_unique_posts_per_group || 100;
   elements.checkpointExportEvery.value = settings.config?.checkpoint_export_every_posts ?? 100;
@@ -189,7 +231,6 @@ async function loadState() {
   document.querySelector('#download-last').disabled = !response.has_last_result;
   renderState(response.state);
   await renderDirectoryName();
-  await renderDevLogBridgeStatus();
   if (!response.state?.running && response.last_export?.ok) {
     const destination = response.last_export.destination === 'selected_directory'
       ? `${response.last_export.directory_name}/${response.last_export.filename}`
@@ -225,10 +266,32 @@ document.querySelector('#clear-directory').addEventListener('click', async () =>
 
 document.querySelector('#start').addEventListener('click', async () => {
   try {
-    const tab = await activeFacebookTab();
+    const targetGroups = inputUrls();
+    if (!targetGroups.length) throw new Error('Hãy nhập ít nhất một URL nhóm.');
+    if (targetGroups.length > 50) throw new Error('Mỗi phiên hỗ trợ tối đa 50 URL.');
+    if (targetGroups.some((url) => !/^https:\/\/www\.facebook\.com\/groups\/[^/]+\/?(?:[?#].*)?$/.test(url))) {
+      throw new Error('Danh sách có URL nhóm Facebook không hợp lệ.');
+    }
     setStatus('Đang khởi tạo phiên tự động…');
     const response = await chrome.runtime.sendMessage({
-      action: 'startUrlSession', tab_id: tab.id, options: optionsFromForm()
+      action: 'startUrlSession', options: optionsFromForm()
+    });
+    if (!response.ok) throw new Error(response.error);
+    renderState(response.state);
+    setStatus('Tab quét đã mở ở nền. Bạn có thể dùng tab khác.', 'success');
+  } catch (error) {
+    setStatus(error.message, 'error');
+  }
+});
+
+document.querySelector('#start-keywords').addEventListener('click', async () => {
+  try {
+    const options = keywordOptionsFromForm();
+    if (!options.keywords.length) throw new Error('Hãy nhập ít nhất một từ khóa tìm group.');
+    const tab = await activeFacebookTab();
+    setStatus('Đang tìm các group phù hợp theo từ khóa…');
+    const response = await chrome.runtime.sendMessage({
+      action: 'startAutomatedSession', tab_id: tab.id, options
     });
     if (!response.ok) throw new Error(response.error);
     renderState(response.state);
@@ -250,10 +313,14 @@ document.querySelector('#resume').addEventListener('click', async () => {
 });
 
 document.querySelector('#stop').addEventListener('click', async () => {
-  await chrome.runtime.sendMessage({ action: 'stopBatch' });
-  elements.state.textContent = 'Đã dừng';
-  elements.state.dataset.state = 'idle';
-  setStatus('Đã dừng và xuất dữ liệu đã thu được.', 'success');
+  const response = await chrome.runtime.sendMessage({ action: 'stopBatch' });
+  if (!response.ok) return setStatus(response.error, 'error');
+  const result = await chrome.runtime.sendMessage({ action: 'getBatchState' });
+  renderState(result.state);
+  const exported = result.last_export;
+  setStatus(exported?.ok
+    ? `Đã dừng và lưu: ${exported.directory_name || exported.folder}/${exported.filename || ''}`
+    : 'Đã dừng. Kiểm tra Downloads/FacebookDemandCollector nếu chưa chọn thư mục.', 'success');
 });
 
 document.querySelector('#download-last').addEventListener('click', async () => {

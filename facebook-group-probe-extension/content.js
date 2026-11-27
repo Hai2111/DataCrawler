@@ -112,6 +112,15 @@
     return null;
   }
 
+  function isTopLevelPostNode(node, container) {
+    const article = node?.closest?.('[role="article"]');
+    if (!article) return true;
+    const containerArticle = container.matches('[role="article"]')
+      ? container
+      : container.closest('[role="article"]');
+    return Boolean(containerArticle && article === containerArticle);
+  }
+
   function postContainers() {
     const commentButtons = [...document.querySelectorAll('[aria-label], button')]
       .filter((item) => /bình luận về bài viết|comment on/i.test(
@@ -143,44 +152,63 @@
   }
 
   function primaryPostText(container) {
-    const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
-    const candidates = [...container.querySelectorAll('[data-ad-preview="message"], [data-ad-comet-preview="message"]')]
+    const messageNodes = [...container.querySelectorAll('[data-ad-preview="message"], [data-ad-comet-preview="message"]')];
+    // Facebook no longer consistently emits data-ad-preview on group posts. A
+    // conservative dir=auto fallback is safe only when it is outside nested
+    // role=article regions (comments and most shared-post cards) and outside
+    // interactive/header elements. It is still tagged as a message candidate,
+    // so the core validator never substitutes a comment or visible context.
+    const fallbackNodes = [...container.querySelectorAll('[dir="auto"]')]
+      .filter((node) => isTopLevelPostNode(node, container))
+      .filter((node) => !node.closest('a, button, form, [role="button"], [role="link"], [role="textbox"]'))
+      .filter((node) => !node.querySelector('[dir="auto"]'))
+      .filter((node) => {
+        const text = cleanText(node.innerText || node.textContent);
+        return text.length >= 2 && !UI_TEXT.test(text) && !/^(Công khai|Public)$/iu.test(text);
+      });
+    const candidates = [...new Set([...messageNodes, ...fallbackNodes])]
       .map((node) => {
         const closestArticle = node.closest('[role="article"]');
         return {
           text: node.innerText || node.textContent,
           source: 'message',
-          scope: !outerArticle || !closestArticle || closestArticle === outerArticle ? 'top-level' : 'nested',
+          scope: isTopLevelPostNode(node, container) ? 'top-level' : 'nested',
           inside_comment: Boolean(node.closest('form, [aria-label*="Viết bình luận" i], [aria-label*="Write a comment" i]')),
-          inside_shared_post: Boolean(outerArticle && closestArticle && closestArticle !== outerArticle)
+          inside_shared_post: Boolean(closestArticle && closestArticle !== container)
         };
       });
     return Core.selectOriginalPostBody(candidates);
   }
 
   function postPermalink(container) {
-    const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
-    const candidates = [...container.querySelectorAll('a[href]')]
-      .filter((anchor) => {
-        const closestArticle = anchor.closest('[role="article"]');
-        return !outerArticle || !closestArticle || closestArticle === outerArticle;
-      })
-      .map((anchor) => ({ anchor, identity: Core.canonicalPostIdentity(anchor.href, groupKey()) }))
+    const anchors = [...container.querySelectorAll('a[href]')];
+    const candidates = anchors
+      .filter((anchor) => isTopLevelPostNode(anchor, container))
+      .map((anchor) => ({ anchor, identity: Core.canonicalPostIdentity(anchor.href, groupKey()), evidence_scope: 'top-level' }))
       .filter((item) => item.identity.post_id)
       .sort((left, right) => right.identity.confidence - left.identity.confidence);
-    const best = candidates[0];
+    // Some feed cards expose the canonical parent post ID only through a
+    // visible comment permalink. The comment body is never used; only the
+    // /groups/<group>/posts/<post_id>/ path is used as identity evidence.
+    const commentIdentityCandidates = anchors
+      .filter((anchor) => !isTopLevelPostNode(anchor, container) && /[?&]comment_id=/.test(anchor.href))
+      .map((anchor) => ({ anchor, identity: Core.canonicalPostIdentity(anchor.href, groupKey()), evidence_scope: 'nested-comment-permalink' }))
+      .filter((item) => item.identity.post_id)
+      .sort((left, right) => right.identity.confidence - left.identity.confidence);
+    const best = candidates[0] || commentIdentityCandidates[0];
     return best
-      ? { ...best.identity, anchor: best.anchor }
-      : { ...Core.canonicalPostIdentity(null, groupKey()), anchor: null };
+      ? {
+          ...best.identity,
+          anchor: best.anchor,
+          timestamp_anchor: best.evidence_scope === 'top-level' ? best.anchor : null,
+          evidence_scope: best.evidence_scope
+        }
+      : { ...Core.canonicalPostIdentity(null, groupKey()), anchor: null, timestamp_anchor: null, evidence_scope: 'missing' };
   }
 
   function timestampInfo(container, preferredAnchor) {
-    const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
     const timeElement = [...container.querySelectorAll('time[datetime], abbr[data-utime]')]
-      .find((node) => {
-        const closestArticle = node.closest('[role="article"]');
-        return !outerArticle || !closestArticle || closestArticle === outerArticle;
-      });
+      .find((node) => isTopLevelPostNode(node, container));
     if (timeElement) {
       const iso = timeElement.getAttribute('datetime') ||
         (timeElement.getAttribute('data-utime') ? new Date(Number(timeElement.getAttribute('data-utime')) * 1000).toISOString() : null);
@@ -190,10 +218,7 @@
     const anchors = [preferredAnchor, ...container.querySelectorAll('a[href]')]
       .filter(Boolean)
       .filter((anchor, index, all) => all.indexOf(anchor) === index)
-      .filter((anchor) => {
-        const closestArticle = anchor.closest('[role="article"]');
-        return !outerArticle || !closestArticle || closestArticle === outerArticle;
-      });
+      .filter((anchor) => isTopLevelPostNode(anchor, container));
     const relativePattern = /\b(?:vừa xong|\d+\s*(?:phút|giờ|ngày|tuần|tháng|năm)|just now|\d+\s*(?:m|h|d|w|mo|y))\b/iu;
     const absolutePattern = /\b(?:\d{1,2}\s+tháng\s+\d{1,2}|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2})\b/iu;
     for (const anchor of anchors) {
@@ -225,11 +250,8 @@
   }
 
   function authorInfo(container, config) {
-    const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
-    const allLinks = [...container.querySelectorAll('a[href]')].filter((anchor) => {
-      const closestArticle = anchor.closest('[role="article"]');
-      return !outerArticle || !closestArticle || closestArticle === outerArticle;
-    });
+    const allLinks = [...container.querySelectorAll('a[href]')]
+      .filter((anchor) => isTopLevelPostNode(anchor, container));
     const groupUserLinks = allLinks.filter((anchor) =>
       /\/groups\/[^/]+\/user\//.test(anchor.getAttribute('href') || '')
     );
@@ -262,12 +284,8 @@
   }
 
   function engagement(container) {
-    const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
     const labels = [...container.querySelectorAll('[aria-label], button')]
-      .filter((item) => {
-        const closestArticle = item.closest('[role="article"]');
-        return !outerArticle || !closestArticle || closestArticle === outerArticle;
-      })
+      .filter((item) => isTopLevelPostNode(item, container))
       .map((item) => cleanText(item.getAttribute('aria-label') || item.textContent)).filter(Boolean);
     const commentLabel = labels.find((label) => /bình luận về bài viết|comment on/i.test(label));
     const shareLabel = labels.find((label) => /chia sẻ bài viết|share post/i.test(label));
@@ -308,10 +326,8 @@
 
   function mediaItems(container) {
     const items = [];
-    const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
     for (const link of container.querySelectorAll('a[href]')) {
-      const closestArticle = link.closest('[role="article"]');
-      if (outerArticle && closestArticle && closestArticle !== outerArticle) continue;
+      if (!isTopLevelPostNode(link, container)) continue;
       const href = link.getAttribute('href') || '';
       let type = null;
       if (/\/photo\//.test(href)) type = 'photo';
@@ -369,19 +385,18 @@
   }
 
   function verifiedContainerProvenance(container, identity) {
-    const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
     const labels = [...container.querySelectorAll('[aria-label], button')]
-      .filter((item) => {
-        const closestArticle = item.closest('[role="article"]');
-        return !outerArticle || !closestArticle || closestArticle === outerArticle;
-      })
+      .filter((item) => isTopLevelPostNode(item, container))
       .map((item) => cleanText(item.getAttribute('aria-label') || item.textContent));
-    const hasPostControl = labels.some((label) => /bình luận về bài viết|comment on|chia sẻ bài viết|share post/i.test(label));
+    const hasCommentControl = labels.some((label) => /bình luận về bài viết|comment on/i.test(label));
+    const hasShareControl = labels.some((label) => /chia sẻ bài viết|share post/i.test(label));
+    const hasPostControl = hasCommentControl && hasShareControl;
     const identityInsideContainer = Boolean(identity?.anchor && container.contains(identity.anchor));
     return {
-      verified_top_level_container: Boolean(outerArticle && hasPostControl && identityInsideContainer),
+      verified_top_level_container: Boolean(hasPostControl && identityInsideContainer),
       identity_source: identity?.source || 'missing',
       identity_confidence: identity?.confidence || 0,
+      identity_evidence_scope: identity?.evidence_scope || 'missing',
       post_controls_observed: hasPostControl,
       identity_inside_container: identityInsideContainer
     };
@@ -445,12 +460,13 @@
     const postId = permalink.post_id;
     const author = authorInfo(container, config);
     const textNodes = uniqueStrings([...container.querySelectorAll('[dir="auto"]')]
+      .filter((node) => isTopLevelPostNode(node, container))
       .map((node) => cleanText(node.textContent))
       .filter((value) => value && !UI_TEXT.test(value)), 200);
     const visibleContext = textNodes.join('\n');
     const primary = primaryPostText(container);
     const primaryText = primary.text;
-    const time = timestampInfo(container, permalink.anchor);
+    const time = timestampInfo(container, permalink.timestamp_anchor);
     const names = author.names_for_redaction;
     const contentFingerprint = primaryText ? textHash(normalizeForFingerprint(primaryText)) : null;
     const correlationEvidence = [
@@ -486,11 +502,7 @@
       media: mediaItems(container),
       visible_comments: extractVisibleComments(container, config, names),
       has_see_more: [...container.querySelectorAll('[role="button"], button')]
-        .filter((button) => {
-          const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
-          const closestArticle = button.closest('[role="article"]');
-          return !outerArticle || !closestArticle || closestArticle === outerArticle;
-        })
+        .filter((button) => isTopLevelPostNode(button, container))
         .some((button) => /^(Xem thêm|See more)$/i.test(cleanText(button.textContent))),
       raw_snapshot: rawSnapshot(container, config, names),
       extraction: {
@@ -706,12 +718,8 @@
   async function expandSeeMore(containers) {
     let clicks = 0;
     for (const container of containers) {
-      const outerArticle = container.matches('[role="article"]') ? container : container.closest('[role="article"]');
       const buttons = [...container.querySelectorAll('[role="button"], button')]
-        .filter((button) => {
-          const closestArticle = button.closest('[role="article"]');
-          return !outerArticle || !closestArticle || closestArticle === outerArticle;
-        })
+        .filter((button) => isTopLevelPostNode(button, container))
         .filter((button) => /^(Xem thêm|See more)$/i.test(cleanText(button.textContent)));
       for (const button of buttons.slice(0, 3)) {
         button.click();
@@ -974,7 +982,7 @@
     maximum_comments_per_post: 10, collect_raw_snapshot: true
   }) {
     return {
-      schema_version: '0.7.1',
+      schema_version: '0.7.3',
       collected_at: new Date().toISOString(),
       ...groupMetadata(),
       scope: 'visible_posts_only',
