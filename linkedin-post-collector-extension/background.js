@@ -1,3 +1,4 @@
+importScripts('extractor-core.js');
 const SCHEMA_VERSION = '0.1.0';
 const DEFAULT_CONFIG = {
   minimum_valid_posts_per_source: 100,
@@ -147,7 +148,7 @@ async function savePayload(payload, prefix = 'linkedin-demand-leads', preferDire
 }
 
 function validPosts(result) {
-  return (result?.posts || []).filter((post) => post.validation?.status === 'VALID' && post.validation?.is_valid);
+  return (result?.posts || []).filter((post) => post.validation?.status === 'VALID' && post.validation?.is_valid && globalThis.LinkedInExtractorCore.validatePost(post).is_valid);
 }
 
 function makePayload(state) {
@@ -156,7 +157,7 @@ function makePayload(state) {
   const duplicates = [];
   for (const source of sources) {
     for (const post of validPosts(source)) {
-      const key = post.activity_id || post.content_fingerprint;
+      const key = post.activity_id;
       if (!key) continue;
       if (unique.has(key)) duplicates.push({ duplicate_activity_id: post.activity_id, canonical_activity_id: unique.get(key).activity_id, source_url: source.source_url });
       else unique.set(key, { ...post, source_key: source.source_key, source_url: source.source_url });

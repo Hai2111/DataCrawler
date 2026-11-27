@@ -63,20 +63,32 @@
   function validatePost(post) {
     const reasons = [];
     if (!post?.body?.is_original || !cleanText(post.body.text)) reasons.push('missing_original_body');
-    if (!/^\d{8,}$/.test(String(post?.activity_id || ''))) reasons.push('missing_canonical_activity_id');
-    if (!post?.post_url || !/\/feed\/update\/urn:li:activity:\d+\/?$/i.test(post.post_url)) reasons.push('missing_canonical_post_url');
-    if (!post?.provenance?.verified_top_level_container) reasons.push('unverified_top_level_container');
-    const status = reasons.length === 0 ? 'VALID' : reasons.length >= 3 ? 'INVALID' : 'PARTIAL';
+    const id = String(post?.activity_id || '');
+    const canonicalId = /^\d{8,}$/.test(id);
+    const urlMatch = String(post?.post_url || '').match(/^https:\/\/www\.linkedin\.com\/feed\/update\/urn:li:activity:(\d{8,})\/$/);
+    const mismatch = canonicalId && urlMatch && id !== urlMatch[1];
+    if (!canonicalId) reasons.push('missing_canonical_activity_id');
+    if (!urlMatch) reasons.push('missing_canonical_post_url');
+    if (mismatch) reasons.push('identity_url_mismatch');
+    if (post?.provenance?.verified_top_level_container !== true) reasons.push('unverified_top_level_container');
+    const p = post?.provenance || {};
+    if (!['container-urn', 'activity-reference'].includes(p.identity_source) || !(p.identity_confidence >= 0.8)) reasons.push('untrustworthy_provenance');
+    const unsafeBody = post?.body?.substituted_from_comment === true ||
+      ['comment', 'shared', '[dir="auto"]', '.break-words', '[data-testid="expandable-text-box"]'].includes(post?.body?.source);
+    if (unsafeBody) reasons.push('unverified_body_source');
+    const status = mismatch || unsafeBody || p.verified_top_level_container !== true || reasons.length >= 3 ? 'INVALID' : reasons.length ? 'PARTIAL' : 'VALID';
     return { status, is_valid: status === 'VALID', reasons };
   }
 
   function canMerge(left, right) {
-    if (!left || !right) return false;
-    if (left.activity_id && right.activity_id) return left.activity_id === right.activity_id;
-    if (left.correlation_key && right.correlation_key) return left.correlation_key === right.correlation_key;
-    return Boolean(left.content_fingerprint && right.content_fingerprint
-      && left.body?.is_original && right.body?.is_original
-      && left.content_fingerprint === right.content_fingerprint);
+    if (!left || !right || validatePost(left).status === 'INVALID' || validatePost(right).status === 'INVALID') return false;
+    if (!/^\d{8,}$/.test(String(left.activity_id || '')) || String(left.activity_id) !== String(right.activity_id || '')) return false;
+    if (!left.post_url || left.post_url !== right.post_url) return false;
+    return [left, right].every(post => {
+      const p = post.provenance || {};
+      return p.verified_top_level_container === true &&
+        ['container-urn', 'activity-reference'].includes(p.identity_source) && p.identity_confidence >= 0.8;
+    });
   }
 
   function quality(post) {

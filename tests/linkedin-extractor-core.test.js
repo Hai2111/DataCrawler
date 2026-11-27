@@ -20,7 +20,7 @@ test('VALID requires original body, canonical ID, URL and provenance', () => {
     activity_id: '7312345678901234567',
     post_url: 'https://www.linkedin.com/feed/update/urn:li:activity:7312345678901234567/',
     body: { text: 'We need a PCB designer for a prototype.', is_original: true },
-    provenance: { verified_top_level_container: true }
+    provenance: { verified_top_level_container: true, identity_source: 'activity-reference', identity_confidence: 1 }
   });
   assert.equal(validation.status, 'VALID');
   assert.equal(validation.is_valid, true);
@@ -30,15 +30,20 @@ test('missing body is PARTIAL and cannot be treated as valid', () => {
   const validation = Core.validatePost({
     activity_id: '7312345678901234567',
     post_url: 'https://www.linkedin.com/feed/update/urn:li:activity:7312345678901234567/',
-    body: { text: null, is_original: false }, provenance: { verified_top_level_container: true }
+    body: { text: null, is_original: false }, provenance: { verified_top_level_container: true, identity_source: 'activity-reference', identity_confidence: 1 }
   });
   assert.equal(validation.status, 'PARTIAL');
   assert.ok(validation.reasons.includes('missing_original_body'));
 });
 
-test('partial observations merge only on strong evidence', () => {
-  assert.equal(Core.canMerge({ correlation_key: 'same' }, { correlation_key: 'same', activity_id: '7312345678901234567' }), true);
-  assert.equal(Core.canMerge({ activity_id: '7312345678901234567' }, { activity_id: '7399999999999999999' }), false);
+test('same verified Activity ID required; collisions and inconsistent URLs rejected', () => {
+  const base = { activity_id: '7312345678901234567', post_url: 'https://www.linkedin.com/feed/update/urn:li:activity:7312345678901234567/', body: { text: 'Original body', is_original: true }, provenance: { verified_top_level_container: true, identity_source: 'activity-reference', identity_confidence: 1 } };
+  assert.equal(Core.canMerge(base, { ...base, body: { text: null, is_original: false } }), true);
+  assert.equal(Core.canMerge({ ...base, activity_id: null, post_url: null, correlation_key: 'same' }, { ...base, correlation_key: 'same' }), false);
+  assert.equal(Core.canMerge(base, { ...base, activity_id: '7399999999999999999', post_url: 'https://www.linkedin.com/feed/update/urn:li:activity:7399999999999999999/' }), false);
+  assert.equal(Core.validatePost({ ...base, activity_id: '7399999999999999999' }).status, 'INVALID');
+  assert.equal(Core.validatePost({ ...base, post_url: 'https://example.com/feed/update/urn:li:activity:7312345678901234567/' }).is_valid, false);
+  assert.equal(Core.validatePost({ ...base, body: { ...base.body, source: '[dir="auto"]' } }).is_valid, false);
 });
 
 test('parses compact LinkedIn engagement numbers', () => {
@@ -55,6 +60,6 @@ test('uses time datetime as reliable timestamp', () => {
 
 test('observation quality increases with verified identity and body', () => {
   const partial = Core.quality({ body: { text: 'Body', is_original: true } });
-  const complete = Core.quality({ body: { text: 'Body', is_original: true }, activity_id: '7312345678901234567', post_url: 'x', provenance: { verified_top_level_container: true } });
+  const complete = Core.quality({ body: { text: 'Body', is_original: true }, activity_id: '7312345678901234567', post_url: 'x', provenance: { verified_top_level_container: true, identity_source: 'activity-reference', identity_confidence: 1 } });
   assert.ok(complete > partial);
 });

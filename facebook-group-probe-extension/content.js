@@ -47,16 +47,8 @@
   }
 
   function normalizeForFingerprint(value) {
-    return cleanText(value)
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/https?:\/\/\S+/g, ' ')
-      .replace(PHONE_PATTERN, ' [phone] ')
-      .replace(/\bfacebook\b|\bxem them\b|\bsee more\b/g, ' ')
-      .replace(/[^a-z0-9]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 3000);
+    // Similarity only: preserve numbers, accents and links. Never use this as identity.
+    return cleanText(value).normalize('NFC').toLowerCase();
   }
 
   function normalizePhone(value) {
@@ -171,7 +163,7 @@
         const closestArticle = node.closest('[role="article"]');
         return {
           text: node.innerText || node.textContent,
-          source: 'message',
+          source: messageNodes.includes(node) ? 'message' : 'unverified-fallback',
           scope: isTopLevelPostNode(node, container) ? 'top-level' : 'nested',
           inside_comment: Boolean(node.closest('form, [aria-label*="Viết bình luận" i], [aria-label*="Write a comment" i]')),
           inside_shared_post: Boolean(closestArticle && closestArticle !== container)
@@ -184,6 +176,7 @@
     const anchors = [...container.querySelectorAll('a[href]')];
     const candidates = anchors
       .filter((anchor) => isTopLevelPostNode(anchor, container))
+      .filter((anchor) => !anchor.closest('[data-ad-preview="message"], [data-ad-comet-preview="message"], form') && !/[?&]comment_id=/.test(anchor.href))
       .map((anchor) => ({ anchor, identity: Core.canonicalPostIdentity(anchor.href, groupKey()), evidence_scope: 'top-level' }))
       .filter((item) => item.identity.post_id)
       .sort((left, right) => right.identity.confidence - left.identity.confidence);
@@ -195,7 +188,9 @@
       .map((anchor) => ({ anchor, identity: Core.canonicalPostIdentity(anchor.href, groupKey()), evidence_scope: 'nested-comment-permalink' }))
       .filter((item) => item.identity.post_id)
       .sort((left, right) => right.identity.confidence - left.identity.confidence);
-    const best = candidates[0] || commentIdentityCandidates[0];
+    const pool = candidates.length ? candidates : commentIdentityCandidates;
+    const identities = new Set(pool.map(item => item.identity.post_url));
+    const best = identities.size === 1 ? pool[0] : null;
     return best
       ? {
           ...best.identity,
@@ -638,25 +633,16 @@
 
   function upsertPost(posts, incoming, config) {
     if (!incoming.validation?.is_valid) return false;
-    let existingKey = posts.has(incoming.post_id) ? incoming.post_id : null;
-    if (!existingKey) {
-      for (const [key, value] of posts.entries()) {
-        if (value.content_fingerprint && value.content_fingerprint === incoming.content_fingerprint) {
-          existingKey = key;
-          break;
-        }
-      }
-    }
-    const merged = richerPost(existingKey ? posts.get(existingKey) : null, incoming, config);
-    if (existingKey && existingKey !== merged.post_id) posts.delete(existingKey);
+    const existing = posts.get(incoming.post_id);
+    if (existing && !Core.canMergePostObservations(existing, incoming)) return false;
+    const merged = richerPost(existing, incoming, config);
+    if (!Core.validatePost(merged).is_valid) return false;
     posts.set(merged.post_id, merged);
     return true;
   }
 
   function candidateStorageKey(post) {
-    if (post.post_id) return `id:${post.post_id}`;
-    if (post.correlation_key) return `corr:${post.correlation_key}`;
-    if (post.content_fingerprint) return `body:${post.content_fingerprint}`;
+    if (post.post_id && post.post_url && Core.canMergePostObservations(post, post)) return `id:${post.post_url}`;
     return null;
   }
 
@@ -893,7 +879,7 @@
             for (const [key, stored] of candidates.entries()) {
               if (stored === candidate || Core.canMergePostObservations(stored, candidate)) candidates.delete(key);
             }
-          } else if ((candidate.observation_count || 0) >= 2) {
+          } else if (!candidateStorageKey(candidate) || (candidate.observation_count || 0) >= 2) {
             stableFailures.push(candidate);
           }
         }
