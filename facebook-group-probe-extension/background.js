@@ -1,3 +1,4 @@
+importScripts('extractor-core.js');
 const DEFAULT_KEYWORDS = [
   'thiết kế mạch điện tử',
   'thiết kế PCB',
@@ -250,7 +251,7 @@ function normalizeForDedupe(value) {
 }
 
 function isValidPost(post) {
-  return post?.validation?.is_valid === true && post?.validation?.status === 'VALID';
+  return post?.validation?.is_valid === true && post?.validation?.status === 'VALID' && globalThis.FacebookExtractorCore.validatePost(post).is_valid;
 }
 
 function validPostCount(group) {
@@ -267,21 +268,20 @@ function hashText(value) {
 }
 
 function deduplicatePosts(groups) {
-  const fingerprints = new Map();
+  const identities = new Map();
   const uniquePosts = [];
   const duplicates = [];
   for (const group of groups) {
     for (const post of group.posts || []) {
       if (!isValidPost(post)) continue;
-      const normalized = normalizeForDedupe(post.text || post.visible_context_text);
-      const fingerprint = post.content_fingerprint || hashText(normalized);
-      const record = { ...post, source_group_key: group.group_key, source_group_url: group.group_url, content_fingerprint: fingerprint };
-      if (normalized.length >= 40 && fingerprints.has(fingerprint)) {
-        duplicates.push({ post_id: post.post_id, post_url: post.post_url, source_group_key: group.group_key, duplicate_of: fingerprints.get(fingerprint) });
+      const key = post.post_url;
+      const record = { ...post, source_group_key: group.group_key, source_group_url: group.group_url };
+      if (identities.has(key)) {
+        duplicates.push({ post_id: post.post_id, post_url: post.post_url, source_group_key: group.group_key, duplicate_of: identities.get(key) });
         continue;
       }
       uniquePosts.push(record);
-      if (normalized.length >= 40) fingerprints.set(fingerprint, { post_id: post.post_id, post_url: post.post_url, source_group_key: group.group_key });
+      identities.set(key, { post_id: post.post_id, post_url: post.post_url, source_group_key: group.group_key });
     }
   }
   return { uniquePosts, duplicates };

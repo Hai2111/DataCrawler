@@ -21,7 +21,7 @@
   }
 
   function sourceKey(value) { return `source-${hashText(value)}`; }
-  function normalizeFingerprint(value) { return Core.cleanText(value).toLowerCase().replace(/https?:\/\/\S+/g, '[url]').replace(/\d+/g, '#'); }
+  function normalizeFingerprint(value) { return Core.cleanText(value).normalize('NFC').toLowerCase(); }
   function protect(value, config, names = []) {
     let text = Core.cleanText(value);
     if (!text) return null;
@@ -56,12 +56,8 @@
       '.update-components-text',
       '.feed-shared-update-v2__description',
       '[data-view-name="feed-commentary"]',
-      '[data-testid="expandable-text-box"]',
       '.update-components-update-v2__commentary',
-      '[data-test-id="main-feed-activity-card"] .break-words',
-      '.feed-shared-text',
-      '.break-words',
-      '[dir="auto"]'
+      '.feed-shared-text'
     ];
     for (const selector of selectors) {
       const candidates = ownedNodes(container, selector)
@@ -79,11 +75,13 @@
     const values = [
       `data-urn:${container.getAttribute('data-urn') || ''}`,
       container.getAttribute('data-id') || '',
-      ...[...container.querySelectorAll('[data-urn*="urn:li:activity:"], [data-id^="urn:li:activity:"]')]
+      ...ownedNodes(container, '[data-urn*="urn:li:activity:"], [data-id^="urn:li:activity:"]')
+        .filter(node => !node.closest('.comments-comment-item, [data-view-name="comment"], .feed-shared-mini-update-v2, [data-view-name="feed-repost"]'))
         .flatMap((node) => [node.getAttribute('data-urn'), node.getAttribute('data-id')]).filter(Boolean),
       ...ownedNodes(container, 'a[href*="/feed/update/"], a[href*="activity-"], a[href*="activityId="]').map((anchor) => anchor.href)
     ];
-    return Core.canonicalIdentity(values);
+    const ids = new Set(values.map(Core.activityId).filter(Boolean));
+    return Core.canonicalIdentity(ids.size === 1 ? values : []);
   }
 
   function authorInfo(container, config) {
@@ -265,7 +263,7 @@
     return merged;
   }
 
-  function candidateKey(post) { return post.activity_id ? `id:${post.activity_id}` : post.correlation_key ? `corr:${post.correlation_key}` : post.content_fingerprint ? `body:${post.content_fingerprint}` : null; }
+  function candidateKey(post) { return post.activity_id && Core.canMerge(post, post) ? `id:${post.activity_id}` : null; }
 
   function upsertCandidate(candidates, incoming, config, round) {
     const entry = [...candidates.entries()].find(([, candidate]) => Core.canMerge(candidate, incoming));
@@ -356,9 +354,13 @@
         for (const observation of observations) {
           const candidate = upsertCandidate(candidates, observation, config, round);
           if (candidate.validation.is_valid) {
-            posts.set(candidate.activity_id, mergePost(posts.get(candidate.activity_id), candidate, config));
+            const existing = posts.get(candidate.activity_id);
+            if (!existing || Core.canMerge(existing, candidate)) {
+              const merged = mergePost(existing, candidate, config);
+              if (Core.validatePost(merged).is_valid) posts.set(candidate.activity_id, merged);
+            }
             for (const [candidateId, stored] of candidates) if (stored === candidate || Core.canMerge(stored, candidate)) candidates.delete(candidateId);
-          } else if (candidate.observation_count >= 2) stableFailures.push(candidate);
+          } else if (!candidateKey(candidate) || candidate.observation_count >= 2) stableFailures.push(candidate);
         }
         for (const failure of stableFailures) {
           const identity = failure.activity_id || failure.correlation_key || failure.content_fingerprint || 'missing';

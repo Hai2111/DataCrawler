@@ -47,13 +47,17 @@ test('top-level body selector never substitutes comments or shared-post text', (
   assert.equal(missing.is_original, false);
 });
 
-test('partial observations merge only through strong stable evidence', () => {
-  const bodyOnly = { correlation_key: 'corr-1', body: { text: 'Original body', is_original: true }, content_fingerprint: 'body-1' };
-  const identityOnly = { correlation_key: 'corr-1', post_id: '123', post_url: 'https://www.facebook.com/groups/g/posts/123/' };
-  const unrelated = { correlation_key: 'corr-2', post_id: '999' };
-  assert.equal(Core.canMergePostObservations(bodyOnly, identityOnly), true);
-  assert.equal(Core.canMergePostObservations(bodyOnly, unrelated), false);
-  assert.ok(Core.observationQuality(identityOnly) > 0);
+test('merge requires matching verified ID and URL; fingerprint and relative time alone are insufficient', () => {
+  const base = fixturePost(fixtures.find(item => item.expected_status === 'VALID'));
+  const missingBody = { ...base, body: { text: null, source: 'missing', is_original: false }, text: null };
+  assert.equal(Core.canMergePostObservations(base, missingBody), true);
+  const noId = { ...base, post_id: null, post_url: null, correlation_key: 'same', content_fingerprint: 'same' };
+  assert.equal(Core.canMergePostObservations(noId, { ...base, correlation_key: 'same', content_fingerprint: 'same' }), false);
+  assert.equal(Core.canMergePostObservations(base, { ...base, post_id: '999', post_url: 'https://www.facebook.com/groups/manual-review/posts/999/' }), false);
+  assert.equal(Core.validatePost({ ...base, post_id: '999' }).status, 'INVALID');
+  assert.equal(Core.validatePost({ ...base, provenance: { ...base.provenance, identity_evidence_scope: 'nested-comment-permalink' } }).is_valid, false);
+  assert.equal(Core.validatePost({ ...base, body: { ...base.body, source: 'unverified-fallback' } }).is_valid, false);
+  assert.ok(Core.observationQuality(base) > 0);
 });
 
 test('canonical permalink extraction covers direct, story and media-set links', () => {

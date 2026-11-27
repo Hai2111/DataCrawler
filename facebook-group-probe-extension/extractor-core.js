@@ -108,9 +108,11 @@
 
   function validatePost(post) {
     const bodyText = cleanText(post?.body?.text ?? post?.text);
-    const originalBody = post?.body?.is_original === true;
+    const originalBody = post?.body?.is_original === true && post?.body?.source === 'top-level-message';
     const canonicalId = /^\d+$/.test(String(post?.post_id || ''));
     const canonicalUrl = /^https:\/\/www\.facebook\.com\/groups\/[^/]+\/posts\/\d+\/$/.test(String(post?.post_url || ''));
+    const urlId = canonicalUrl ? String(post.post_url).match(/\/posts\/(\d+)\/$/)?.[1] : null;
+    const identityMismatch = canonicalId && canonicalUrl && urlId !== String(post.post_id);
     const source = post?.provenance?.identity_source || post?.extraction?.permalink_source || 'missing';
     const verifiedContainer = post?.provenance?.verified_top_level_container === true;
     const trustworthy = verifiedContainer && TRUSTED_IDENTITY_SOURCES.has(source) && (post?.provenance?.identity_confidence ?? 0) >= 0.8;
@@ -120,9 +122,10 @@
     if (!bodyText) reasons.push('empty_post_body');
     if (!canonicalId) reasons.push('missing_canonical_post_id');
     if (!canonicalUrl) reasons.push('missing_canonical_post_url');
-    if (!trustworthy) reasons.push('untrustworthy_provenance');
+    if (!trustworthy || post?.provenance?.identity_evidence_scope === 'nested-comment-permalink') reasons.push('untrustworthy_provenance');
+    if (identityMismatch) reasons.push('identity_url_mismatch');
     let status = 'VALID';
-    if (!verifiedContainer || post?.body?.source === 'comment' || post?.body?.substituted_from_comment) status = 'INVALID';
+    if (identityMismatch || !verifiedContainer || post?.body?.source === 'comment' || post?.body?.substituted_from_comment) status = 'INVALID';
     else if (reasons.length) status = 'PARTIAL';
     return {
       status,
@@ -156,13 +159,15 @@
   }
 
   function canMergePostObservations(left, right) {
-    if (!left || !right) return false;
-    if (left.post_id && right.post_id) return String(left.post_id) === String(right.post_id);
-    if (left.correlation_key && right.correlation_key) return left.correlation_key === right.correlation_key;
-    if (left.content_fingerprint && right.content_fingerprint && left.body?.is_original && right.body?.is_original) {
-      return left.content_fingerprint === right.content_fingerprint;
+    if (!left || !right || validatePost(left).status === 'INVALID' || validatePost(right).status === 'INVALID') return false;
+    if (!/^\d+$/.test(String(left.post_id || '')) || String(left.post_id) !== String(right.post_id || '')) return false;
+    if (!left.post_url || left.post_url !== right.post_url) return false;
+    for (const post of [left, right]) {
+      const p = post.provenance || {};
+      if (!p.verified_top_level_container || !TRUSTED_IDENTITY_SOURCES.has(p.identity_source) ||
+          !(p.identity_confidence >= 0.8) || p.identity_evidence_scope === 'nested-comment-permalink') return false;
     }
-    return false;
+    return true;
   }
 
   function observationQuality(post) {
