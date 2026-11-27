@@ -2,6 +2,31 @@
 
 Chrome Manifest V3 tooling for user-initiated research of Facebook Groups that the signed-in user can already access.
 
+## Windows setup (PowerShell)
+
+Requires Git for Windows, Node.js 22+ and Chrome. No administrator access is normally needed.
+
+For a fresh installation, run in PowerShell:
+
+```powershell
+git clone https://github.com/Hai2111/DataCrawler.git D:\codex\DataCrawler
+cd D:\codex\DataCrawler
+powershell -NoProfile -ExecutionPolicy RemoteSigned -File .\SETUP.ps1
+```
+
+For subsequent runs, open the existing checkout and run the same script. It updates main with fast-forward only, creates storage folders, runs both regression suites, starts the localhost debug server and opens Chrome Extensions. It refuses to update a dirty working tree or another branch. It never resets local changes or deletes collected data.
+
+The script uses its own checkout directory by default, or `D:\codex\DataCrawler` if copied outside a checkout. Options: `-Root "E:\DataCrawler"`, `-SkipUpdate`, `-SkipLogServer`, `-SkipBrowser`. Execution policy is process-scoped in the example; no system-wide policy change is needed.
+
+In Chrome (`chrome://extensions/`), enable Developer mode, use Load unpacked for each extension directory (or Reload after updates), and select the corresponding local export directory in its popup:
+
+| Extension directory | Local export directory |
+| --- | --- |
+| `facebook-group-probe-extension/` | `collected_data/facebook/` |
+| `linkedin-post-collector-extension/` | `collected_data/linkedin/` |
+
+The local export and debug directories are gitignored. Keep collected data local. The setup does not sign in, install extensions silently, or start collection. Use only sources for which collection is permitted.
+
 ## Project contents
 
 - `facebook-group-probe-extension/`: URL-driven Facebook Group collector.
